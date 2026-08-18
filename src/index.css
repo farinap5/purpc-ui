@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Keep the interface restrained while giving every tool glyph one brand color. */
+svg.lucide {
+  color: #a78bfa !important;
+}
