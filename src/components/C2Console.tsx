@@ -85,7 +85,9 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const [editedScriptContent, setEditedScriptContent] = useState("");
   const [scriptActionError, setScriptActionError] = useState("");
 
-  const consoleEndRef = useRef<HTMLDivElement | null>(null);
+  const consoleScrollRef = useRef<HTMLDivElement | null>(null);
+  const followOutputByTabRef = useRef<Record<string, boolean>>({});
+  const scrollPositionByTabRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     if (!scripts.some(script => script.id === selectedScriptId)) {
@@ -99,8 +101,22 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   }, [selectedScriptId, scripts]);
 
   useEffect(() => {
-    consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = consoleScrollRef.current;
+    if (!container) return;
+    if (followOutputByTabRef.current[activeTabId] ?? true) {
+      container.scrollTop = container.scrollHeight;
+    } else if (scrollPositionByTabRef.current[activeTabId] !== undefined) {
+      container.scrollTop = scrollPositionByTabRef.current[activeTabId];
+    }
+    scrollPositionByTabRef.current[activeTabId] = container.scrollTop;
   }, [eventLogs, activeTabId]);
+
+  const handleConsoleScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    followOutputByTabRef.current[activeTabId] = distanceFromBottom <= 24;
+    scrollPositionByTabRef.current[activeTabId] = container.scrollTop;
+  };
 
   const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
   let serverHost = serverAddress;
@@ -254,7 +270,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const renderEventLog = () => {
     return (
       <div className="flex flex-col h-full bg-[#000000] text-[#00FF00] font-mono p-3 overflow-auto text-sm leading-relaxed">
-        <div className="flex-1 space-y-1 overflow-y-auto">
+        <div ref={consoleScrollRef} onScroll={handleConsoleScroll} className="flex-1 space-y-1 overflow-y-auto">
           {eventLogs.map((log) => {
             let textColor = "text-[#00FF00]";
             if (log.type === "input") textColor = "text-[#FFFF00]";
@@ -267,7 +283,6 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
               </div>
             );
           })}
-          <div ref={consoleEndRef} />
         </div>
       </div>
     );
@@ -314,7 +329,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-1.5 font-mono text-sm">
+          <div ref={consoleScrollRef} onScroll={handleConsoleScroll} className="flex-1 overflow-y-auto space-y-1.5 font-mono text-sm">
             <div className="text-[#00FF00] text-xs p-1 bg-[#111111] border border-[#222222] rounded mb-2">
               *** Session active callback for {session.user}@{session.computer} ({session.pid})
             </div>
@@ -347,7 +362,6 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                 </div>
               );
             })}
-            <div ref={consoleEndRef} />
           </div>
         </div>
 
@@ -697,7 +711,6 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                 <span className="select-text break-all text-gray-300">{pkt.payload}</span>
               </div>
             ))}
-            <div ref={consoleEndRef} />
           </div>
         </div>
       </div>

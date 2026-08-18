@@ -105,7 +105,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 value={draftUsername}
                 onChange={(e) => setDraftUsername(e.target.value)}
                 placeholder="gnome"
-                className="w-full bg-[#242528] border border-[#444] rounded p-1.5 text-white outline-none font-semibold"
+                className="w-full bg-[#242528] border border-[#444] rounded p-1.5 text-white outline-none transition focus:border-violet-400 font-semibold"
               />
             </div>
             <div>
@@ -117,7 +117,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onChange={(e) => setDraftServerAddress(e.target.value)}
                 placeholder="http://127.0.0.1:8080"
                 required
-                className="w-full bg-[#242528] border border-[#444] rounded p-1.5 text-white outline-none font-mono"
+                className="w-full bg-[#242528] border border-[#444] rounded p-1.5 text-white outline-none transition focus:border-violet-400 font-mono"
               />
             </div>
             <div>
@@ -130,7 +130,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 placeholder="WazdOO4JweiJsf00LV4YebQcXDEKEcMeLmjG9N0klGg"
                 autoComplete="off"
                 required
-                className="w-full bg-[#242528] border border-[#444] rounded p-1.5 text-white outline-none font-mono"
+                className="w-full bg-[#242528] border border-[#444] rounded p-1.5 text-white outline-none transition focus:border-violet-400 font-mono"
               />
             </div>
             <div className="text-[10px] text-gray-500">

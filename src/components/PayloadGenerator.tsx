@@ -96,7 +96,7 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
                   setLogs([]);
                   setError("");
                 }}
-                className="w-full rounded border border-[#444] bg-[#242528] p-2 text-white outline-none"
+                className="w-full rounded border border-[#444] bg-[#242528] p-2 text-white outline-none transition focus:border-violet-400"
               >
                 {profiles.length === 0 && <option value="">No profiles available</option>}
                 {profiles.map(profile => <option key={profile.name} value={profile.name}>{profile.name}</option>)}

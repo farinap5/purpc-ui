@@ -276,7 +276,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     onChange={event => setField("name", event.target.value)}
                     readOnly={!isCreating}
                     placeholder="profile-name"
-                    className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 text-white outline-none focus:border-[#657a96] read-only:cursor-not-allowed read-only:text-gray-500"
+                    className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 text-white outline-none transition focus:border-violet-400 read-only:cursor-not-allowed read-only:text-gray-500"
                   />
                 </label>
                 {editableFields.map(field => (
@@ -286,7 +286,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                       value={form[field.property]}
                       onChange={event => setField(field.property, event.target.value)}
                       placeholder={field.placeholder}
-                      className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 font-mono text-white outline-none focus:border-[#657a96]"
+                      className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 font-mono text-white outline-none transition focus:border-violet-400"
                     />
                   </label>
                 ))}
