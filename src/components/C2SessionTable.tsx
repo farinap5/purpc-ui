@@ -19,6 +19,7 @@ interface SessionTableProps {
 
 type SessionColumnKey =
   | "type"
+  | "id"
   | "extIp"
   | "intIp"
   | "listener"
@@ -33,6 +34,7 @@ type SessionColumnKey =
 
 const sessionColumns: Array<{ key: SessionColumnKey; label: string; accessibleLabel: string }> = [
   { key: "type", label: "", accessibleLabel: "Operating system" },
+  { key: "id", label: "Session ID", accessibleLabel: "Session ID" },
   { key: "extIp", label: "Socket", accessibleLabel: "Remote socket" },
   { key: "intIp", label: "UUID", accessibleLabel: "Session UUID" },
   { key: "listener", label: "Payload", accessibleLabel: "Payload type" },
@@ -48,6 +50,7 @@ const sessionColumns: Array<{ key: SessionColumnKey; label: string; accessibleLa
 
 const initialColumnWidths: Record<SessionColumnKey, number> = {
   type: 38,
+  id: 130,
   extIp: 130,
   intIp: 130,
   listener: 135,
@@ -63,6 +66,7 @@ const initialColumnWidths: Record<SessionColumnKey, number> = {
 
 const minimumColumnWidths: Record<SessionColumnKey, number> = {
   type: 32,
+  id: 90,
   extIp: 90,
   intIp: 90,
   listener: 90,
@@ -116,6 +120,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteValue, setNoteValue] = useState("");
   const [columnWidths, setColumnWidths] = useState(initialColumnWidths);
+  const [clockNow, setClockNow] = useState(Date.now());
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
   const fittedColumnWidths = useRef(initialColumnWidths);
   const hasManuallyResizedColumns = useRef(false);
@@ -124,6 +129,11 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
     startX: number;
     startWidth: number;
   } | null>(null);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const updateColumnWidth = (key: SessionColumnKey, width: number) => {
     hasManuallyResizedColumns.current = true;
@@ -321,10 +331,13 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
             {sessions.map((session) => {
               const isSelected = selectedSessionId === session.id;
               const isKilled = session.status === "killed";
+              const lastActive = session.lastSeenAt !== undefined
+                ? Math.max(0, Math.floor((clockNow - session.lastSeenAt) / 1000))
+                : session.lastActive;
               const sleepSeconds = getSleepSeconds(session);
               const unhealthyThreshold = sleepSeconds * 1.5;
-              const isUnhealthy = !isKilled && sleepSeconds > 0 && session.lastActive > unhealthyThreshold;
-              const lastDisplay = formatLastActive(session.lastActive);
+              const isUnhealthy = !isKilled && sleepSeconds > 0 && lastActive > unhealthyThreshold;
+              const lastDisplay = formatLastActive(lastActive);
 
               return (
                 <tr
@@ -348,6 +361,11 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                   {/* type */}
                   <td className="px-2 py-0.5 border-r border-[#282828] text-center">
                     {getOsIcon()}
+                  </td>
+
+                  {/* session id */}
+                  <td className="px-2 py-0.5 border-r border-[#282828]" title={session.id}>
+                    {session.id}
                   </td>
                   
                   {/* ext... */}

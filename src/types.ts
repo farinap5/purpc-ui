@@ -1,3 +1,21 @@
+export type ConsoleTabType =
+  | "event_log"
+  | "sessions"
+  | "listeners"
+  | "loots"
+  | "downloads"
+  | "screenshots"
+  | "scripts"
+  | "packets"
+  | "session";
+
+export interface ConsoleTab {
+  id: string;
+  title: string;
+  type: ConsoleTabType;
+  sessionId?: string;
+}
+
 export interface Session {
   id: string;
   extIp: string;
@@ -48,6 +66,8 @@ export interface Loot {
   capturedAt: string;
   data: string; // e.g. "Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::"
   description: string;
+  size?: number;
+  sha256?: string;
 }
 
 export interface Script {

@@ -1,5 +1,5 @@
-import { useEffect, useState, useRef } from "react";
-import { Session, Listener, Loot, Script, ConsoleLog, Packet, ConnectionSettings, Command } from "./types";
+import { useState, useRef } from "react";
+import { Session, Listener, Loot, Script, ConsoleLog, Packet, ConnectionSettings, Command, ConsoleTab, ConsoleTabType } from "./types";
 import { C2Toolbar } from "./components/C2Toolbar";
 import { C2SessionTable } from "./components/C2SessionTable";
 import { C2Console } from "./components/C2Console";
@@ -14,6 +14,7 @@ import {
   TeamEnvelope,
   TeamListener,
   TeamLoot,
+  TeamLootGetReply,
   TeamOperations,
   TeamProfile,
   TeamProfileUpdateKey,
@@ -25,6 +26,7 @@ import {
 } from "./api/teamApi";
 
 const MAX_EVENT_MONITOR_EVENTS = 1000;
+const MAX_CONSOLE_LOGS = 1000;
 
 const createWebSocketSystemEvent = (action: string, address: string): Packet => ({
   id: `event-${action.toLowerCase()}-${Date.now()}`,
@@ -77,7 +79,9 @@ const mapTeamLoot = (loot: TeamLoot): Loot => {
     sourceSession: loot.session,
     capturedAt: loot.created_at ? new Date(loot.created_at).toLocaleString() : "—",
     data: loot.file_name,
-    description: `${loot.size.toLocaleString()} bytes${loot.sha256 ? ` · SHA-256 ${loot.sha256}` : ""}`
+    description: `${loot.size.toLocaleString()} bytes${loot.sha256 ? ` · SHA-256 ${loot.sha256}` : ""}`,
+    size: loot.size,
+    sha256: loot.sha256
   };
 };
 
@@ -143,7 +147,7 @@ export default function App() {
   const sessionNotesRef = useRef<Record<string, string>>({});
 
   // Tabbed system state
-  const [tabs, setTabs] = useState<any[]>([
+  const [tabs, setTabs] = useState<ConsoleTab[]>([
     { id: "event_log", title: "Event Log", type: "event_log" }
   ]);
   const [activeTabId, setActiveTabId] = useState("event_log");
@@ -158,21 +162,6 @@ export default function App() {
   const workspaceRef = useRef<HTMLDivElement | null>(null);
   const [upperPanelHeight, setUpperPanelHeight] = useState(42);
   const [isResizingPanels, setIsResizingPanels] = useState(false);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      const now = Date.now();
-      setSessions(previous => previous.map(session => {
-        const lastActive = session.lastSeenAt !== undefined
-          ? Math.max(0, Math.floor((now - session.lastSeenAt) / 1000))
-          : session.lastActive + 1;
-
-        return lastActive === session.lastActive ? session : { ...session, lastActive };
-      }));
-    }, 1000);
-
-    return () => window.clearInterval(intervalId);
-  }, []);
 
   const getPanelSplitLimits = () => {
     const workspaceHeight = workspaceRef.current?.getBoundingClientRect().height ?? 0;
@@ -204,7 +193,7 @@ export default function App() {
   };
 
   // Helper: Open a tab or switch focus to it if it already exists
-  const handleAddTab = (type: string, title: string, id?: string) => {
+  const handleAddTab = (type: ConsoleTabType, title: string, id?: string) => {
     const tabId = id || type;
     const exists = tabs.find(t => t.id === tabId);
     
@@ -239,17 +228,21 @@ export default function App() {
     handleAddTab("session", `${session.user}@${session.computer} (${session.id})`, session.id);
   };
 
+  const appendLog = (log: ConsoleLog) => {
+    setEventLogs(previous => {
+      const next = [...previous, log];
+      return next.length > MAX_CONSOLE_LOGS ? next.slice(-MAX_CONSOLE_LOGS) : next;
+    });
+  };
+
   const addLog = (type: ConsoleLog["type"], message: string, sessionId?: string, timestamp = new Date().toLocaleString()) => {
-    setEventLogs(previous => [
-      ...previous,
-      {
-        id: `log-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        timestamp,
-        type,
-        message,
-        sessionId
-      }
-    ]);
+    appendLog({
+      id: `log-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      timestamp,
+      type,
+      message,
+      sessionId
+    });
   };
 
   const removeSessionFromWorkspace = (id: string) => {
@@ -285,17 +278,22 @@ export default function App() {
   const handleServerEvent = async (event: TeamEnvelope, client: TeamServerClient, refreshResources = true) => {
     const eventTime = event.time ? new Date(event.time).toLocaleString() : new Date().toLocaleString();
     const sequence = event.sequence ? ` #${event.sequence}` : "";
-    setEventLogs(previous => [
-      ...previous,
-      {
+    if (event.type !== "evt.session.checkin") {
+      appendLog({
         id: `event-${event.sequence || Date.now()}-${event.type}`,
         timestamp: eventTime,
         type: event.type === "evt.listener.failed" ? "error" : "system",
         message: `${event.type}${sequence}`
-      }
-    ]);
+      });
+    }
 
-    if (event.type === "evt.session.deleted") {
+    if (event.type === "evt.loot.created") {
+      const createdLoot = mapTeamLoot(event.data as TeamLoot);
+      setLoots(previous => [...previous.filter(item => item.id !== createdLoot.id), createdLoot]);
+    } else if (event.type === "evt.loot.deleted") {
+      const deletedLoot = event.data as TeamLoot;
+      if (deletedLoot.uuid) setLoots(previous => previous.filter(item => item.id !== deletedLoot.uuid));
+    } else if (event.type === "evt.session.deleted") {
       const deletedSession = event.data as { name?: string };
       if (deletedSession.name) removeSessionFromWorkspace(deletedSession.name);
     } else if (event.type === "evt.session.checkin") {
@@ -327,10 +325,6 @@ export default function App() {
 
     if (!refreshResources) return;
     try {
-      if (event.type.startsWith("evt.loot.")) {
-        const serverLoot = await client.request<TeamLoot[]>(TeamOperations.lootList, {});
-        setLoots(serverLoot.map(mapTeamLoot));
-      }
       if (
         event.type.startsWith("evt.listener.") ||
         (event.type.startsWith("evt.session.") && !["evt.session.checkin", "evt.session.deleted"].includes(event.type)) ||
@@ -430,16 +424,56 @@ export default function App() {
     setListeners(previous => previous.map(item => item.name === name ? mapTeamListener(listener) : item));
   };
 
-  const handleScriptState = async (script: Script, load: boolean) => {
+  const handleRefreshScripts = async () => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
-    if (load) {
-      const loaded = await client.request<TeamScript>(TeamOperations.scriptLoad, { path: script.id });
-      setScripts(previous => [...previous.filter(item => item.id !== loaded.path), mapTeamScript(loaded)]);
-    } else {
-      await client.request(TeamOperations.scriptUnload, { name: script.id });
-      setScripts(previous => previous.filter(item => item.id !== script.id));
-    }
+    const listed = await client.request<TeamScript[]>(TeamOperations.scriptList, {});
+    const mapped = listed.map(mapTeamScript);
+    setScripts(mapped);
+    return mapped;
+  };
+
+  const handleLoadScript = async (path: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    const loaded = await client.request<TeamScript>(TeamOperations.scriptLoad, { path });
+    const mapped = mapTeamScript(loaded);
+    setScripts(previous => [...previous.filter(item => item.id !== mapped.id), mapped]);
+    return mapped;
+  };
+
+  const handleUnloadScript = async (path: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    await client.request<{ path: string }>(TeamOperations.scriptUnload, { name: path });
+    setScripts(previous => previous.filter(item => item.id !== path));
+  };
+
+  const handleRefreshLoots = async () => {
+    const listed = await requireTeamClient().request<TeamLoot[]>(TeamOperations.lootList, {});
+    const mapped = listed.map(mapTeamLoot);
+    setLoots(mapped);
+    return mapped;
+  };
+
+  const handleDownloadLoot = async (id: string) => {
+    const client = requireTeamClient();
+    const reply = await client.request<TeamLootGetReply>(TeamOperations.lootGet, { uuid: id });
+    const blob = await client.download(reply.download_url);
+    const objectURL = URL.createObjectURL(blob);
+    const fileName = reply.loot.file_name.split(/[\\/]/).pop()?.trim() || `${id}.bin`;
+    const anchor = document.createElement("a");
+    anchor.href = objectURL;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+  };
+
+  const handleDeleteLoot = async (id: string) => {
+    const deleted = await requireTeamClient().request<TeamLoot>(TeamOperations.lootDelete, { uuid: id });
+    setLoots(previous => previous.filter(item => item.id !== (deleted.uuid || id)));
   };
 
   const handleUpdateNote = (id: string, note: string) => {
@@ -685,8 +719,13 @@ export default function App() {
             packets={packets}
             onAddListener={handleAddListener}
             onSetListenerState={handleListenerState}
-            onSetScriptState={handleScriptState}
-            onAddLog={(log) => setEventLogs(prev => [...prev, log])}
+            onRefreshScripts={handleRefreshScripts}
+            onLoadScript={handleLoadScript}
+            onUnloadScript={handleUnloadScript}
+            onRefreshLoots={handleRefreshLoots}
+            onDownloadLoot={handleDownloadLoot}
+            onDeleteLoot={handleDeleteLoot}
+            onAddLog={appendLog}
             onExecuteCommand={executeSessionCommand}
             isWsConnected={isWsConnected}
             operatorName={operatorName}

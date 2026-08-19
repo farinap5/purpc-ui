@@ -4,23 +4,17 @@ import {
   Radio, 
   Key, 
   FileCode, 
-  Activity, 
   Plus, 
   Download, 
+  RefreshCw,
+  Trash2,
   Image as ImageIcon
 } from "lucide-react";
-import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command } from "../types";
+import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTab } from "../types";
 
 interface CommandExecutionResult {
   task_ids?: string[];
   message?: string;
-}
-
-interface ConsoleTab {
-  id: string;
-  title: string;
-  type: "event_log" | "listeners" | "loots" | "downloads" | "screenshots" | "scripts" | "packets" | "session";
-  sessionId?: string;
 }
 
 interface C2ConsoleProps {
@@ -39,7 +33,12 @@ interface C2ConsoleProps {
   
   onAddListener: (newListener: Omit<Listener, "id" | "status">) => Promise<void>;
   onSetListenerState: (name: string, start: boolean) => Promise<void>;
-  onSetScriptState: (script: Script, load: boolean) => Promise<void>;
+  onRefreshScripts: () => Promise<Script[]>;
+  onLoadScript: (path: string) => Promise<Script>;
+  onUnloadScript: (path: string) => Promise<void>;
+  onRefreshLoots: () => Promise<Loot[]>;
+  onDownloadLoot: (id: string) => Promise<void>;
+  onDeleteLoot: (id: string) => Promise<void>;
   onAddLog: (log: ConsoleLog) => void;
   onExecuteCommand: (sessionId: string, commandLine: string) => Promise<CommandExecutionResult>;
   isWsConnected: boolean;
@@ -61,7 +60,12 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   packets,
   onAddListener,
   onSetListenerState,
-  onSetScriptState,
+  onRefreshScripts,
+  onLoadScript,
+  onUnloadScript,
+  onRefreshLoots,
+  onDownloadLoot,
+  onDeleteLoot,
   onAddLog,
   onExecuteCommand,
   isWsConnected,
@@ -82,8 +86,14 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
   // Script editor state
   const [selectedScriptId, setSelectedScriptId] = useState<string>("");
-  const [editedScriptContent, setEditedScriptContent] = useState("");
+  const [scriptPath, setScriptPath] = useState("");
   const [scriptActionError, setScriptActionError] = useState("");
+  const [isScriptActionPending, setIsScriptActionPending] = useState(false);
+
+  // Loot manager state
+  const [lootActionId, setLootActionId] = useState("");
+  const [lootActionError, setLootActionError] = useState("");
+  const [isRefreshingLoots, setIsRefreshingLoots] = useState(false);
 
   const consoleScrollRef = useRef<HTMLDivElement | null>(null);
   const followOutputByTabRef = useRef<Record<string, boolean>>({});
@@ -91,14 +101,33 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
   useEffect(() => {
     if (!scripts.some(script => script.id === selectedScriptId)) {
-      setSelectedScriptId(scripts[0]?.id || "");
-      return;
-    }
-    const scr = scripts.find(s => s.id === selectedScriptId);
-    if (scr) {
-      setEditedScriptContent(scr.content);
+      const nextScript = scripts[0];
+      setSelectedScriptId(nextScript?.id || "");
+      setScriptPath(nextScript?.id || "");
     }
   }, [selectedScriptId, scripts]);
+
+  useEffect(() => {
+    const tab = tabs.find(item => item.id === activeTabId);
+    if (tab?.type !== "scripts") return;
+
+    setScriptActionError("");
+    setIsScriptActionPending(true);
+    void onRefreshScripts()
+      .catch(error => setScriptActionError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setIsScriptActionPending(false));
+  }, [activeTabId]);
+
+  useEffect(() => {
+    const tab = tabs.find(item => item.id === activeTabId);
+    if (tab?.type !== "loots" && tab?.type !== "downloads") return;
+
+    setLootActionError("");
+    setIsRefreshingLoots(true);
+    void onRefreshLoots()
+      .catch(error => setLootActionError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setIsRefreshingLoots(false));
+  }, [activeTabId]);
 
   useEffect(() => {
     const container = consoleScrollRef.current;
@@ -118,7 +147,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     scrollPositionByTabRef.current[activeTabId] = container.scrollTop;
   };
 
-  const activeTab = tabs.find(t => t.id === activeTabId) || tabs[0];
+  const activeTab = tabs.find(t => t.id === activeTabId);
   let serverHost = serverAddress;
   try {
     serverHost = new URL(serverAddress).host;
@@ -128,7 +157,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
   const handleCommandSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!commandInput.trim()) return;
+    if (!commandInput.trim() || !activeTab) return;
 
     const currentCommand = commandInput.trim();
     setHistory(prev => [...prev, currentCommand]);
@@ -287,6 +316,54 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       </div>
     );
   };
+
+  const renderSessions = () => {
+    return (
+      <div className="h-full overflow-auto bg-[#1e1e1e] p-3 text-xs text-gray-300">
+        <div className="mb-2 flex items-center justify-between border-b border-[#333] pb-2">
+          <h3 className="font-bold uppercase text-gray-200">Active Sessions</h3>
+          <span className="text-[10px] text-gray-500">{sessions.length} total</span>
+        </div>
+        <div className="overflow-auto rounded border border-[#333]">
+          <table className="w-full min-w-[700px] table-fixed text-left">
+            <thead className="bg-[#292a2d] text-[10px] uppercase text-gray-500">
+              <tr>
+                <th className="px-2 py-1.5">Name</th>
+                <th className="px-2 py-1.5">User</th>
+                <th className="px-2 py-1.5">Computer</th>
+                <th className="px-2 py-1.5">Payload</th>
+                <th className="px-2 py-1.5">Process</th>
+                <th className="px-2 py-1.5">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#2c2d30] bg-[#222326]">
+              {sessions.map(session => (
+                <tr key={session.id} className="hover:bg-[#2d2e31]">
+                  <td className="truncate px-2 py-1.5 font-mono text-gray-200">{session.id}</td>
+                  <td className="truncate px-2 py-1.5">{session.user}</td>
+                  <td className="truncate px-2 py-1.5">{session.computer}</td>
+                  <td className="truncate px-2 py-1.5">{session.listener}</td>
+                  <td className="truncate px-2 py-1.5">{session.process} ({session.pid})</td>
+                  <td className={`px-2 py-1.5 font-bold ${
+                    session.status === "active" ? "text-emerald-400" : session.status === "killed" ? "text-red-400" : "text-amber-400"
+                  }`}>{session.status}</td>
+                </tr>
+              ))}
+              {sessions.length === 0 && (
+                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-600">No sessions are registered.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  const renderUnavailablePanel = () => (
+    <div className="flex h-full items-center justify-center bg-[#1e1e1e] text-sm text-gray-500">
+      This panel is unavailable.
+    </div>
+  );
 
   // 2. Session Terminal
   const renderSessionTerminal = (sessionId: string) => {
@@ -520,76 +597,131 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     );
   };
 
-  // 4. Loots
-  const renderLoots = () => {
-    return (
-      <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-auto flex flex-col font-sans">
-        <h3 className="text-xs font-bold text-gray-200 mb-2 uppercase flex items-center">
-          <Key className="w-3.5 h-3.5 mr-1 text-gray-400" />
-          <span>TeamServer Loot Metadata</span>
-        </h3>
-
-        <div className="border border-[#333333] rounded overflow-hidden flex-1 bg-[#222222]">
-          <table className="w-full text-xs text-left text-gray-300 font-mono">
-            <thead className="bg-[#2a2a2a] text-gray-400 border-b border-[#333333]">
-              <tr>
-                <th className="p-2 w-28">Source</th>
-                <th className="p-2 w-36">Time</th>
-                <th className="p-2">File</th>
-                <th className="p-2">Size / Digest</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#2a2a2a]">
-              {loots.map(c => (
-                <tr key={c.id} className="hover:bg-[#282828]">
-                  <td className="p-2 font-bold text-white">{c.sourceSession}</td>
-                  <td className="p-2 text-gray-500">{c.capturedAt}</td>
-                  <td className="p-2 text-white font-bold select-all">{c.data}</td>
-                  <td className="p-2 text-gray-400">{c.description}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
+  const refreshLoots = async () => {
+    setLootActionError("");
+    setIsRefreshingLoots(true);
+    try {
+      await onRefreshLoots();
+    } catch (error) {
+      setLootActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsRefreshingLoots(false);
+    }
   };
+
+  const runLootAction = async (action: "download" | "delete", id: string) => {
+    const actionId = `${action}:${id}`;
+    setLootActionError("");
+    setLootActionId(actionId);
+    try {
+      if (action === "download") await onDownloadLoot(id);
+      else await onDeleteLoot(id);
+    } catch (error) {
+      setLootActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLootActionId("");
+    }
+  };
+
+  const renderLootTable = (title: string, items: Loot[], icon: React.ReactNode) => (
+    <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-hidden flex flex-col font-sans">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
+          {icon}
+          <span>{title}</span>
+          <span className="ml-2 font-normal text-gray-500">({items.length})</span>
+        </h3>
+        <button
+          type="button"
+          disabled={isRefreshingLoots || !isWsConnected}
+          onClick={() => void refreshLoots()}
+          className="flex items-center gap-1.5 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${isRefreshingLoots ? "animate-spin" : ""}`} />
+          {isRefreshingLoots ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+
+      {lootActionError && (
+        <p className="mb-2 rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">
+          {lootActionError}
+        </p>
+      )}
+
+      <div className="flex-1 overflow-auto rounded border border-[#333333] bg-[#222222]">
+        <table className="w-full min-w-[1100px] text-left text-xs text-gray-300 font-mono">
+          <thead className="sticky top-0 z-10 border-b border-[#333333] bg-[#2a2a2a] text-gray-400">
+            <tr>
+              <th className="p-2">UUID</th>
+              <th className="p-2">Source Session</th>
+              <th className="p-2">Created</th>
+              <th className="p-2">File Name</th>
+              <th className="p-2 text-right">Size</th>
+              <th className="p-2">SHA-256</th>
+              <th className="p-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#2a2a2a]">
+            {items.map(item => (
+              <tr key={item.id} className="hover:bg-[#282828]">
+                <td className="p-2 select-all text-gray-400">{item.id}</td>
+                <td className="p-2 select-all font-bold text-white">{item.sourceSession || "—"}</td>
+                <td className="p-2 whitespace-nowrap text-gray-500">{item.capturedAt}</td>
+                <td className="p-2 select-all break-all font-bold text-white">{item.data}</td>
+                <td className="p-2 whitespace-nowrap text-right text-gray-300">
+                  {item.size === undefined ? "—" : `${item.size.toLocaleString()} B`}
+                </td>
+                <td className="p-2 select-all break-all text-gray-400">{item.sha256 || "—"}</td>
+                <td className="p-2">
+                  <div className="flex justify-end gap-1.5 font-sans">
+                    <button
+                      type="button"
+                      disabled={Boolean(lootActionId) || !isWsConnected}
+                      onClick={() => void runLootAction("download", item.id)}
+                      className="flex items-center gap-1 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Download className="h-3 w-3" />
+                      {lootActionId === `download:${item.id}` ? "Downloading…" : "Download"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(lootActionId) || !isWsConnected}
+                      onClick={() => void runLootAction("delete", item.id)}
+                      className="flex items-center gap-1 rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      {lootActionId === `delete:${item.id}` ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr>
+                <td colSpan={7} className="p-8 text-center font-sans text-gray-500">
+                  No loot has been collected.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // 4. Loots
+  const renderLoots = () => renderLootTable(
+    "TeamServer Loot",
+    loots,
+    <Key className="mr-1 h-3.5 w-3.5 text-gray-400" />
+  );
 
   // 5. Downloaded Files
-  const renderDownloads = () => {
-    const files = loots.filter(l => l.type === "File");
-    return (
-      <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-auto flex flex-col font-sans">
-        <h3 className="text-xs font-bold text-gray-200 mb-2 uppercase flex items-center">
-          <Download className="w-3.5 h-3.5 mr-1 text-gray-400" />
-          <span>Looted Files Repository</span>
-        </h3>
-
-        <div className="border border-[#333333] rounded overflow-hidden flex-1 bg-[#222222]">
-          <table className="w-full text-xs text-left text-gray-300 font-mono">
-            <thead className="bg-[#2a2a2a] text-gray-400 border-b border-[#333333]">
-              <tr>
-                <th className="p-2 w-28">Source Session</th>
-                <th className="p-2 w-36">Time</th>
-                <th className="p-2">Target File Path</th>
-                <th className="p-2">Description</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#2a2a2a]">
-              {files.map(f => (
-                <tr key={f.id} className="hover:bg-[#282828]">
-                  <td className="p-2 font-bold text-white">{f.sourceSession}</td>
-                  <td className="p-2 text-gray-500">{f.capturedAt}</td>
-                  <td className="p-2 text-white">{f.data}</td>
-                  <td className="p-2 text-gray-400">{f.description}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
+  const renderDownloads = () => renderLootTable(
+    "Looted Files Repository",
+    loots.filter(item => item.type === "File"),
+    <Download className="mr-1 h-3.5 w-3.5 text-gray-400" />
+  );
 
   // 6. Screenshots
   const renderScreenshots = () => {
@@ -619,58 +751,143 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
   // 7. Lua Scripts
   const renderScripts = () => {
-    return (
-      <div className="bg-[#1e1e1e] text-gray-300 p-3 h-full overflow-auto flex flex-col md:flex-row gap-3 font-sans">
-        <div className="w-full md:w-64 flex flex-col">
-          <h3 className="text-xs font-bold text-gray-200 mb-2 uppercase flex items-center">
-            <FileCode className="w-3.5 h-3.5 mr-1 text-gray-400" />
-            <span>Lua Scripts</span>
-          </h3>
+    const selectedScript = scripts.find(script => script.id === selectedScriptId);
 
-          <div className="space-y-1.5 flex-1">
+    const refreshScripts = async () => {
+      setScriptActionError("");
+      setIsScriptActionPending(true);
+      try {
+        await onRefreshScripts();
+      } catch (error) {
+        setScriptActionError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsScriptActionPending(false);
+      }
+    };
+
+    const runScriptAction = async (action: "load" | "unload") => {
+      const path = scriptPath.trim();
+      if (!path) {
+        setScriptActionError("Enter a server-side Lua script path.");
+        return;
+      }
+
+      setScriptActionError("");
+      setIsScriptActionPending(true);
+      try {
+        if (action === "load") {
+          const loaded = await onLoadScript(path);
+          setSelectedScriptId(loaded.id);
+          setScriptPath(loaded.id);
+        } else {
+          await onUnloadScript(path);
+          setSelectedScriptId("");
+          setScriptPath("");
+        }
+        await onRefreshScripts();
+      } catch (error) {
+        setScriptActionError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setIsScriptActionPending(false);
+      }
+    };
+
+    return (
+      <div className="flex h-full flex-col gap-3 overflow-auto bg-[#1e1e1e] p-3 font-sans text-gray-300 md:flex-row">
+        <div className="flex w-full flex-col md:w-72">
+          <div className="mb-2 flex items-center justify-between border-b border-[#333] pb-2">
+            <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
+              <FileCode className="mr-1 h-3.5 w-3.5 text-gray-400" />
+              <span>Loaded Scripts</span>
+            </h3>
+            <button
+              type="button"
+              onClick={() => void refreshScripts()}
+              disabled={isScriptActionPending}
+              className="cursor-pointer rounded border border-[#444] px-2 py-1 text-[10px] text-gray-400 hover:bg-[#333] hover:text-white disabled:cursor-wait disabled:opacity-50"
+            >
+              Refresh
+            </button>
+          </div>
+
+          <div className="min-h-32 flex-1 space-y-1.5 overflow-auto">
             {scripts.map(scr => (
-              <div
+              <button
                 key={scr.id}
-                onClick={() => setSelectedScriptId(scr.id)}
-                className={`p-2 rounded border cursor-pointer ${
+                type="button"
+                onClick={() => {
+                  setSelectedScriptId(scr.id);
+                  setScriptPath(scr.id);
+                  setScriptActionError("");
+                }}
+                className={`w-full cursor-pointer rounded border p-2 text-left ${
                   selectedScriptId === scr.id 
                     ? "bg-[#385d8a] border-[#486d9a] text-white" 
                     : "bg-[#252525] border-[#333333] text-gray-300 hover:bg-[#2e2e2e]"
                 }`}
               >
                 <div className="font-bold text-xs">{scr.name}</div>
-                <div className="text-[10px] text-gray-400 truncate">{scr.description}</div>
-              </div>
+                <div className="truncate text-[10px] text-gray-400">{scr.description}</div>
+              </button>
             ))}
+            {scripts.length === 0 && !isScriptActionPending && (
+              <div className="rounded border border-dashed border-[#3a3a3a] p-4 text-center text-[10px] text-gray-600">No scripts are loaded.</div>
+            )}
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col bg-[#222222] border border-[#333333] rounded p-2 gap-2">
-          {scripts.find(script => script.id === selectedScriptId) && (
-            <div className="flex items-center justify-between border-b border-[#333] pb-2 text-[10px]">
-              <span className="font-mono text-gray-500">Script source metadata is read-only.</span>
+        <div className="flex flex-1 flex-col gap-3 rounded border border-[#333333] bg-[#222222] p-3">
+          <form
+            onSubmit={event => {
+              event.preventDefault();
+              void runScriptAction("load");
+            }}
+            className="rounded border border-[#333] bg-[#1a1b1d] p-3"
+          >
+            <label htmlFor="server-script-path" className="mb-1 block text-[11px] text-gray-300">Server-side Lua script path</label>
+            <input
+              id="server-script-path"
+              type="text"
+              value={scriptPath}
+              onChange={event => {
+                setScriptPath(event.target.value);
+                setScriptActionError("");
+              }}
+              placeholder="/opt/purplecommand/scripts/example.lua"
+              className="w-full rounded border border-[#444] bg-[#141414] px-3 py-2 font-mono text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400"
+            />
+            <p className="mt-1 text-[10px] text-gray-600">The path is resolved and read by the TeamServer.</p>
+            <div className="mt-3 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  const selected = scripts.find(script => script.id === selectedScriptId);
-                  if (selected) {
-                    setScriptActionError("");
-                    void onSetScriptState(selected, selected.status !== "Active")
-                      .catch(error => setScriptActionError(error instanceof Error ? error.message : String(error)));
-                  }
-                }}
-                className="cursor-pointer rounded bg-[#383838] px-2 py-1 text-white hover:bg-[#484848]"
+                onClick={() => void runScriptAction("unload")}
+                disabled={isScriptActionPending || !scriptPath.trim()}
+                className="cursor-pointer rounded border border-red-900/70 bg-red-950/30 px-3 py-1.5 text-red-300 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {scripts.find(script => script.id === selectedScriptId)?.status === "Active" ? "Unload" : "Load"}
+                Unload
+              </button>
+              <button
+                type="submit"
+                disabled={isScriptActionPending || !scriptPath.trim()}
+                className="cursor-pointer rounded bg-[#385d8a] px-3 py-1.5 font-bold text-white hover:bg-[#486d9a] disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isScriptActionPending ? "Working…" : "Load"}
               </button>
             </div>
-          )}
+          </form>
+
           {scriptActionError && <p className="rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{scriptActionError}</p>}
-          <textarea
-            value={editedScriptContent}
-            readOnly
-            className="flex-1 w-full bg-[#141414] text-gray-400 font-mono text-xs p-2 rounded outline-none border border-[#333333] resize-none"
-          />
+
+          {selectedScript ? (
+            <div className="rounded border border-[#333] bg-[#18191b] p-3 text-[11px]">
+              <div className="font-bold text-gray-200">{selectedScript.name}</div>
+              <div className="mt-1 break-all font-mono text-gray-500">{selectedScript.id}</div>
+              <div className="mt-2 text-gray-400">Status: <span className="text-emerald-400">{selectedScript.status}</span></div>
+              <pre className="mt-3 whitespace-pre-wrap break-all border-t border-[#333] pt-3 font-mono text-[10px] text-gray-500">{selectedScript.content}</pre>
+            </div>
+          ) : (
+            <div className="flex min-h-32 flex-1 items-center justify-center rounded border border-dashed border-[#333] text-[11px] text-gray-600">Enter a server path to load a script.</div>
+          )}
         </div>
       </div>
     );
@@ -680,11 +897,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const renderEventMonitor = () => {
     return (
       <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-hidden flex flex-col font-mono text-xs">
-        <div className="mb-2 flex items-center justify-between font-sans">
-          <h3 className="text-xs font-bold text-gray-200 uppercase flex items-center">
-            <Activity className="w-3.5 h-3.5 mr-1 text-gray-400" />
-            <span>Event Monitor</span>
-          </h3>
+        <div className="mb-2 flex items-center justify-end font-sans">
           <span className="text-[10px] text-gray-500">{packets.length} / 1000 events</span>
         </div>
 
@@ -718,11 +931,14 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   };
 
   const renderContent = () => {
+    if (!activeTab) return renderUnavailablePanel();
     switch (activeTab.type) {
       case "event_log":
         return renderEventLog();
+      case "sessions":
+        return renderSessions();
       case "session":
-        return activeTab.sessionId ? renderSessionTerminal(activeTab.sessionId) : renderEventLog();
+        return activeTab.sessionId ? renderSessionTerminal(activeTab.sessionId) : renderUnavailablePanel();
       case "listeners":
         return renderListeners();
       case "loots":
@@ -736,7 +952,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       case "packets":
         return renderEventMonitor();
       default:
-        return renderEventLog();
+        return renderUnavailablePanel();
     }
   };
 
@@ -782,7 +998,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       </div>
 
       {/* Command prompt execution bar */}
-      {(activeTab.type === "session" || activeTab.type === "event_log") && (
+      {activeTab && (activeTab.type === "session" || activeTab.type === "event_log") && (
         <div className="bg-[#111111] border-t border-[#2d2d2d] flex flex-col font-mono">
           {/* Prompt Form */}
           <form onSubmit={handleCommandSubmit} className="flex items-center px-2 py-1 bg-[#000000] text-xs">

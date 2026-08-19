@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { ConsoleTabType } from "../types";
 import { 
   Radio, 
   Key, 
@@ -14,7 +15,7 @@ import {
 } from "lucide-react";
 
 interface ToolbarProps {
-  onAddTab: (type: string, title: string, id?: string) => void;
+  onAddTab: (type: ConsoleTabType, title: string, id?: string) => void;
   isWsConnected: boolean;
   onConnectWs: () => void;
   onDisconnectWs: () => void;
@@ -72,15 +73,13 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
     ],
     "Site Management": [
       { label: "Manage Web Servers", action: () => alert("HTTP/S web management portal.") },
-      { label: "Hosted Files", action: () => alert("Upload files to payload server.") },
-      { label: "Socks Proxies", action: () => onAddTab("socks", "Socks Proxies") }
+      { label: "Hosted Files", action: () => alert("Upload files to payload server.") }
     ],
     "Reporting": [
       { label: "Activity Report (PDF)", action: () => alert("Compiling Activity Audit trail...") },
       { label: "Hosts / Targets List", action: () => alert("Compiling discovered hosts report...") }
     ],
     "Help": [
-      { label: "Lua Script Guide", action: () => onAddTab("scripts", "Lua Script Guide") },
       { label: "About PurpleCommand", action: () => alert("PurpleCommand C2 Dashboard") }
     ]
   };

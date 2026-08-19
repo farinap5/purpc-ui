@@ -13,6 +13,9 @@ export const TeamOperations = {
   sessionDelete: "ask.session.delete",
   commandExecute: "ask.command.execute",
   lootList: "ask.loot.list",
+  lootGet: "ask.loot.get",
+  lootDelete: "ask.loot.delete",
+  scriptList: "ask.script.list",
   scriptLoad: "ask.script.load",
   scriptUnload: "ask.script.unload",
   profileList: "ask.profile.list",
@@ -90,6 +93,11 @@ export interface TeamLoot {
   size: number;
   sha256?: string;
   created_at?: string;
+}
+
+export interface TeamLootGetReply {
+  loot: TeamLoot;
+  download_url: string;
 }
 
 export interface TeamScript {
@@ -323,6 +331,27 @@ export class TeamServerClient {
     throw lastError ?? new Error(`Teamserver request failed: ${operation}`);
   }
 
+  async download(remotePath: string): Promise<Blob> {
+    const serverEndpoint = new URL(this.config.serverAddress);
+    const endpoint = new URL(remotePath, `${serverEndpoint.origin}/`);
+    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+      throw new Error(`Unsupported download protocol: ${endpoint.protocol}`);
+    }
+    if (endpoint.origin !== serverEndpoint.origin) {
+      throw new Error("The TeamServer returned a download URL for a different origin.");
+    }
+
+    const response = await fetch(endpoint, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${this.config.token}` }
+    });
+    if (!response.ok) {
+      const message = (await response.text()).trim();
+      throw new Error(`Loot download failed (${response.status}): ${message || response.statusText}`);
+    }
+    return response.blob();
+  }
+
   private requestOnce<T>(id: string, operation: string, raw: string): Promise<T> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -368,12 +397,16 @@ export class TeamServerClient {
   }
 
   private async hello(): Promise<TeamHelloReply> {
+    const replayFrom = this.lastSequence;
     const hello = await this.request<TeamHelloReply>(TeamOperations.systemHello, {
-      last_event_sequence: this.lastSequence
+      last_event_sequence: replayFrom
     });
-    if (!hello.resync_required) return hello;
+    // A new dashboard has no local event continuity to restore. Its snapshot is
+    // the authoritative baseline, so replaying the entire persisted event
+    // database only duplicates state and can block the browser on busy servers.
+    if (!hello.resync_required || replayFrom === 0) return hello;
 
-    let cursor = this.lastSequence;
+    let cursor = replayFrom;
     while (cursor < hello.event_sequence) {
       const records = await this.request<TeamEventRecord[]>(TeamOperations.eventReplay, {
         after: cursor,
