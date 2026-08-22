@@ -1,0 +1,25 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "PurpleCommand",
+  "outputfilename": "purplecommand",
+  "frontend:dir": ".",
+  "frontend:install": "npm ci",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "wailsjsdir": "src",
+  "assetdir": "dist",
+  "build:dir": "build",
+  "build:tags": "webkit2_41",
+  "author": {
+    "name": "PurpleCommand",
+    "email": ""
+  },
+  "info": {
+    "companyName": "PurpleCommand",
+    "productName": "PurpleCommand",
+    "productVersion": "0.1.0",
+    "copyright": "PurpleCommand",
+    "comments": "PurpleCommand TeamServer desktop client"
+  }
+}

@@ -6,6 +6,11 @@ dist/
 dist-ssr/
 .vite/
 
+# Wails desktop output and generated JavaScript bindings
+build/
+src/wailsjs/
+package.json.md5
+
 # Test output
 coverage/
 
