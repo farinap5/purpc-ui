@@ -11,6 +11,7 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTab } from "../types";
+import { UserManager } from "./UserManager";
 
 interface CommandExecutionResult {
   task_ids?: string[];
@@ -949,6 +950,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
         return renderScreenshots();
       case "scripts":
         return renderScripts();
+      case "users":
+        return <UserManager currentUsername={operatorName} />;
       case "packets":
         return renderEventMonitor();
       default:

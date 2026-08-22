@@ -10,6 +10,7 @@ import {
   MessageSquare, 
   Activity, 
   Settings, 
+  UsersRound,
   Zap, 
   TerminalSquare
 } from "lucide-react";
@@ -64,6 +65,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
     ],
     "Payload": [
       { label: "Profiles", action: onTriggerProfileModal }
+    ],
+    "Administration": [
+      { label: "Manage Users", action: () => onAddTab("users", "User Management") }
     ],
     "Attacks": [
       { label: "Spear Phish Emailer", action: () => alert("Opened Spear Phish Module.") },
@@ -225,6 +229,15 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
             className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
             <FileCode className="w-3.5 h-3.5 text-gray-400" />
+          </button>
+
+          <button
+            onClick={() => onAddTab("users", "User Management")}
+            title="Manage TeamServer Users"
+            aria-label="Manage TeamServer Users"
+            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
+          >
+            <UsersRound className="w-3.5 h-3.5 text-gray-400" />
           </button>
 
           <button

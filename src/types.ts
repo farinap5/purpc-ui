@@ -6,6 +6,7 @@ export type ConsoleTabType =
   | "downloads"
   | "screenshots"
   | "scripts"
+  | "users"
   | "packets"
   | "session";
 
