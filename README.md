@@ -1,4 +1,4 @@
-# PurpleCommand desktop build
+# PurpleCommand web and desktop UI
 
 PurpleCommand UI can use Wails to package the interface as a native desktop executable. The browser build remains available.
 
