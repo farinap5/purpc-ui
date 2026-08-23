@@ -1,90 +1,132 @@
 import React, { useEffect, useState } from "react";
+import { TeamUser, TeamUserCredentials } from "../api/teamApi";
 
 interface UserManagerProps {
-  currentUsername: string;
+  users: TeamUser[];
+  isConnected: boolean;
+  onListUsers: () => Promise<TeamUser[]>;
+  onCreateUser: (name: string) => Promise<TeamUserCredentials>;
+  onRefreshUserToken: (name: string) => Promise<TeamUserCredentials>;
+  onDeleteUser: (name: string) => Promise<TeamUser>;
 }
 
-interface ManagedUser {
-  id: string;
-  username: string;
-  createdAt: string;
-  isCurrent: boolean;
+interface IssuedCredential extends TeamUserCredentials {
+  action: "created" | "refreshed";
 }
 
-interface IssuedCredential {
-  userId: string;
-  username: string;
-  token: string;
-}
-
-const createIdentifier = () => {
-  if ("randomUUID" in window.crypto) return window.crypto.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const formatTimestamp = (value?: string) => {
+  if (!value) return "Never";
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime()) || timestamp.getUTCFullYear() <= 1) return "Never";
+  return timestamp.toLocaleString();
 };
 
-const createAuthenticationToken = () => {
-  const bytes = new Uint8Array(32);
-  window.crypto.getRandomValues(bytes);
-  let binary = "";
-  bytes.forEach(byte => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-};
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export const UserManager: React.FC<UserManagerProps> = ({ currentUsername }) => {
-  const [users, setUsers] = useState<ManagedUser[]>(() => [{
-    id: "current-operator",
-    username: currentUsername || "gnome",
-    createdAt: "Current session",
-    isCurrent: true
-  }]);
+export const UserManager: React.FC<UserManagerProps> = ({
+  users,
+  isConnected,
+  onListUsers,
+  onCreateUser,
+  onRefreshUserToken,
+  onDeleteUser
+}) => {
   const [username, setUsername] = useState("");
-  const [formError, setFormError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [pendingAction, setPendingAction] = useState("");
   const [issuedCredential, setIssuedCredential] = useState<IssuedCredential | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
-    setUsers(current => current.map(user => user.isCurrent
-      ? { ...user, username: currentUsername || "gnome" }
-      : user
-    ));
-  }, [currentUsername]);
-
-  const handleCreateUser = (event: React.FormEvent) => {
-    event.preventDefault();
-    const normalizedUsername = username.trim();
-    if (!normalizedUsername) {
-      setFormError("Enter a username.");
+    if (!isConnected) {
+      setPendingAction("");
       return;
     }
-    if (users.some(user => user.username.toLowerCase() === normalizedUsername.toLowerCase())) {
-      setFormError("A user with this name already exists.");
-      return;
-    }
-
-    const userId = createIdentifier();
-    const newUser: ManagedUser = {
-      id: userId,
-      username: normalizedUsername,
-      createdAt: new Date().toLocaleString(),
-      isCurrent: false
+    let cancelled = false;
+    setActionError("");
+    setPendingAction("list");
+    void onListUsers()
+      .catch(error => {
+        if (!cancelled) setActionError(errorMessage(error));
+      })
+      .finally(() => {
+        if (!cancelled) setPendingAction("");
+      });
+    return () => {
+      cancelled = true;
     };
-    setUsers(current => [...current, newUser]);
-    setIssuedCredential({
-      userId,
-      username: normalizedUsername,
-      token: createAuthenticationToken()
-    });
-    setUsername("");
-    setFormError("");
-    setCopyState("idle");
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (issuedCredential && !users.some(user => user.uuid === issuedCredential.user.uuid)) {
+      setIssuedCredential(null);
+      setCopyState("idle");
+    }
+  }, [users, issuedCredential?.user.uuid]);
+
+  const refreshUsers = async () => {
+    setActionError("");
+    setPendingAction("list");
+    try {
+      await onListUsers();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setPendingAction("");
+    }
   };
 
-  const handleDeleteUser = (user: ManagedUser) => {
-    if (user.isCurrent) return;
-    setUsers(current => current.filter(item => item.id !== user.id));
-    if (issuedCredential?.userId === user.id) setIssuedCredential(null);
+  const handleCreateUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = username.trim();
+    if (!name) {
+      setActionError("Enter a username.");
+      return;
+    }
+    if (users.some(user => user.name.toLowerCase() === name.toLowerCase())) {
+      setActionError("A user with this name already exists.");
+      return;
+    }
+
+    setActionError("");
+    setPendingAction("create");
+    try {
+      const credentials = await onCreateUser(name);
+      setIssuedCredential({ ...credentials, action: "created" });
+      setUsername("");
+      setCopyState("idle");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setPendingAction("");
+    }
+  };
+
+  const handleRefreshToken = async (user: TeamUser) => {
+    setActionError("");
+    setPendingAction(`refresh:${user.uuid}`);
+    try {
+      const credentials = await onRefreshUserToken(user.name);
+      setIssuedCredential({ ...credentials, action: "refreshed" });
+      setCopyState("idle");
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setPendingAction("");
+    }
+  };
+
+  const handleDeleteUser = async (user: TeamUser) => {
+    setActionError("");
+    setPendingAction(`delete:${user.uuid}`);
+    try {
+      await onDeleteUser(user.name);
+      if (issuedCredential?.user.uuid === user.uuid) setIssuedCredential(null);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setPendingAction("");
+    }
   };
 
   const handleCopyToken = async () => {
@@ -97,28 +139,57 @@ export const UserManager: React.FC<UserManagerProps> = ({ currentUsername }) => 
     }
   };
 
+  const dismissCredential = () => {
+    setIssuedCredential(null);
+    setCopyState("idle");
+  };
+
+  const isBusy = Boolean(pendingAction);
+  const connectedUsers = users.filter(user => user.connected).length;
+
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto bg-[#1e1e1e] p-3 font-sans text-gray-300">
-      <div className="mb-3 flex items-start justify-between gap-4 border-b border-[#333] pb-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-[#333] pb-3">
         <div>
           <h2 className="text-sm font-bold text-gray-100">TeamServer Users</h2>
-          <p className="mt-1 text-[10px] text-gray-500">Interface preview — changes are stored only in this browser session.</p>
+          <p className="mt-1 text-[10px] text-gray-500">
+            Connected means the user has one or more active WebSocket connections.
+          </p>
         </div>
-        <span className="rounded border border-[#414141] bg-[#292929] px-2 py-1 text-[10px] text-gray-400">
-          {users.length} {users.length === 1 ? "user" : "users"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="rounded border border-[#414141] bg-[#292929] px-2 py-1 text-[10px] text-gray-400">
+            {users.length} {users.length === 1 ? "user" : "users"} · {connectedUsers} connected
+          </span>
+          <button
+            type="button"
+            disabled={!isConnected || isBusy}
+            onClick={() => void refreshUsers()}
+            className="rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-violet-500 hover:bg-[#333] focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {pendingAction === "list" ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-3 rounded border border-violet-900/70 bg-violet-950/20 p-2 text-[10px] text-violet-200/80">
+        User tokens can authenticate WebSocket and HTTP endpoints. Creating, refreshing, or deleting users requires the startup admin token.
       </div>
 
       {issuedCredential && (
-        <section className="mb-3 rounded border border-violet-700/70 bg-violet-950/20 p-3">
+        <section className="mb-3 rounded border border-violet-700/70 bg-violet-950/25 p-3">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-xs font-bold text-violet-200">Authentication token created for {issuedCredential.username}</h3>
-              <p className="mt-1 text-[10px] text-violet-300/70">Copy this token now. The finished TeamServer flow should display it only once.</p>
+              <h3 className="text-xs font-bold text-violet-100">
+                Token {issuedCredential.action} for {issuedCredential.user.name}
+              </h3>
+              <p className="mt-1 text-[10px] text-violet-300/75">
+                Copy this token now. It will not be returned by user listings or events.
+                {issuedCredential.action === "refreshed" && " The previous token and its active WebSocket connections were revoked immediately."}
+              </p>
             </div>
             <button
               type="button"
-              onClick={() => setIssuedCredential(null)}
+              onClick={dismissCredential}
               className="rounded px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-[#333] hover:text-gray-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
             >
               Dismiss
@@ -126,7 +197,7 @@ export const UserManager: React.FC<UserManagerProps> = ({ currentUsername }) => 
           </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row">
             <input
-              aria-label={`Authentication token for ${issuedCredential.username}`}
+              aria-label={`Authentication token for ${issuedCredential.user.name}`}
               readOnly
               value={issuedCredential.token}
               onFocus={event => event.currentTarget.select()}
@@ -146,39 +217,81 @@ export const UserManager: React.FC<UserManagerProps> = ({ currentUsername }) => 
         </section>
       )}
 
-      <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+      {actionError && (
+        <p className="mb-3 rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{actionError}</p>
+      )}
+
+      <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="min-h-48 overflow-auto rounded border border-[#333] bg-[#222]">
-          <table className="w-full min-w-[620px] text-left text-xs">
+          <table className="w-full min-w-[1050px] text-left text-xs">
             <thead className="sticky top-0 z-10 border-b border-[#3a3a3a] bg-[#292a2d] text-[10px] uppercase tracking-wide text-gray-500">
               <tr>
                 <th className="px-3 py-2">Username</th>
+                <th className="px-3 py-2">UUID</th>
+                <th className="px-3 py-2">Role</th>
+                <th className="px-3 py-2">Connection</th>
                 <th className="px-3 py-2">Created</th>
-                <th className="px-3 py-2">Credential</th>
+                <th className="px-3 py-2">Last seen</th>
                 <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#303030]">
               {users.map(user => (
-                <tr key={user.id} className="hover:bg-[#292929]">
-                  <td className="px-3 py-2 font-mono font-bold text-gray-100">
-                    {user.username}
-                    {user.isCurrent && <span className="ml-2 text-[9px] font-normal text-violet-300">CURRENT</span>}
+                <tr key={user.uuid} className="hover:bg-[#292929]">
+                  <td className="px-3 py-2 font-mono font-bold text-gray-100">{user.name}</td>
+                  <td className="select-all px-3 py-2 font-mono text-[10px] text-gray-500">{user.uuid}</td>
+                  <td className="px-3 py-2">
+                    <span className={`rounded border px-1.5 py-0.5 text-[9px] uppercase ${
+                      user.admin
+                        ? "border-violet-700/70 bg-violet-950/30 text-violet-200"
+                        : "border-[#444] bg-[#292929] text-gray-400"
+                    }`}>
+                      {user.admin ? "Admin" : "User"}
+                    </span>
                   </td>
-                  <td className="px-3 py-2 text-gray-500">{user.createdAt}</td>
-                  <td className="px-3 py-2 text-gray-400">{user.isCurrent ? "Existing token" : "Token issued"}</td>
+                  <td className="px-3 py-2">
+                    <span className={user.connected ? "text-emerald-300" : "text-gray-500"}>
+                      <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${user.connected ? "bg-emerald-400" : "bg-gray-600"}`} />
+                      {user.connected ? "Connected" : "Offline"}
+                    </span>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-500">{formatTimestamp(user.created)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-gray-500">{formatTimestamp(user.last_seen)}</td>
                   <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      disabled={user.isCurrent}
-                      onClick={() => handleDeleteUser(user)}
-                      className="rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:border-[#3a3a3a] disabled:bg-[#292929] disabled:text-gray-600"
-                      title={user.isCurrent ? "The current signed-in user cannot be deleted." : `Delete ${user.username}`}
-                    >
-                      Delete
-                    </button>
+                    {user.admin ? (
+                      <span className="text-[10px] text-gray-600">Startup credential protected</span>
+                    ) : (
+                      <div className="flex justify-end gap-1.5">
+                        <button
+                          type="button"
+                          disabled={!isConnected || isBusy}
+                          onClick={() => void handleRefreshToken(user)}
+                          title="Generate a new token and revoke this user's active connections"
+                          className="rounded border border-violet-800/70 bg-violet-950/30 px-2 py-1 text-[10px] text-violet-200 transition hover:border-violet-500 hover:bg-violet-950/60 focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {pendingAction === `refresh:${user.uuid}` ? "Refreshing…" : "Refresh token"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!isConnected || isBusy}
+                          onClick={() => void handleDeleteUser(user)}
+                          title="Delete this user and revoke all active connections"
+                          className="rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {pendingAction === `delete:${user.uuid}` ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-3 py-10 text-center text-gray-600">
+                    {isConnected ? "No users returned by the TeamServer." : "Connect to the TeamServer to list users."}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </section>
@@ -195,21 +308,20 @@ export const UserManager: React.FC<UserManagerProps> = ({ currentUsername }) => 
               value={username}
               onChange={event => {
                 setUsername(event.target.value);
-                setFormError("");
+                setActionError("");
               }}
               placeholder="operator name"
               className="w-full rounded border border-[#444] bg-[#151515] px-3 py-2 text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400"
             />
-            <p className="mt-1 text-[10px] text-gray-600">A random authentication token is generated when the user is created.</p>
-            {formError && (
-              <p className="mt-2 rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{formError}</p>
-            )}
+            <p className="mt-1 text-[10px] text-gray-600">
+              The TeamServer securely generates the token. The token is displayed only after creation.
+            </p>
             <button
               type="submit"
-              disabled={!username.trim()}
+              disabled={!isConnected || isBusy || !username.trim()}
               className="mt-3 w-full rounded bg-violet-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-violet-600 focus:outline-none focus:ring-1 focus:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Create user
+              {pendingAction === "create" ? "Creating…" : "Create user"}
             </button>
           </form>
         </section>

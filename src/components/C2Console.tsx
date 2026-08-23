@@ -11,6 +11,7 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTab } from "../types";
+import { TeamUser, TeamUserCredentials, TeamUserMessage } from "../api/teamApi";
 import { createLootContentPreview, imageMimeType, LootContentPreview } from "../utils/loot";
 import { UserManager } from "./UserManager";
 
@@ -32,6 +33,7 @@ interface C2ConsoleProps {
   commands: Command[];
   eventLogs: ConsoleLog[];
   packets: Packet[];
+  users: TeamUser[];
   
   onAddListener: (newListener: Omit<Listener, "id" | "status">) => Promise<void>;
   onSetListenerState: (name: string, start: boolean) => Promise<void>;
@@ -42,6 +44,11 @@ interface C2ConsoleProps {
   onDownloadLoot: (id: string) => Promise<void>;
   onLoadLootContent: (id: string) => Promise<Blob>;
   onDeleteLoot: (id: string) => Promise<void>;
+  onListUsers: () => Promise<TeamUser[]>;
+  onCreateUser: (name: string) => Promise<TeamUserCredentials>;
+  onRefreshUserToken: (name: string) => Promise<TeamUserCredentials>;
+  onDeleteUser: (name: string) => Promise<TeamUser>;
+  onSendUserMessage: (message: string) => Promise<TeamUserMessage>;
   onAddLog: (log: ConsoleLog) => void;
   onExecuteCommand: (sessionId: string, commandLine: string) => Promise<CommandExecutionResult>;
   isWsConnected: boolean;
@@ -61,6 +68,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   commands,
   eventLogs,
   packets,
+  users,
   onAddListener,
   onSetListenerState,
   onRefreshScripts,
@@ -70,6 +78,11 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   onDownloadLoot,
   onLoadLootContent,
   onDeleteLoot,
+  onListUsers,
+  onCreateUser,
+  onRefreshUserToken,
+  onDeleteUser,
+  onSendUserMessage,
   onAddLog,
   onExecuteCommand,
   isWsConnected,
@@ -291,12 +304,28 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     setCommandInput("");
 
     if (activeTab.type === "event_log") {
-      onAddLog({
-        id: `log-${Date.now()}`,
-        timestamp: new Date().toLocaleString(),
-        type: "input",
-        message: `<${operatorName}> ${currentCommand}`
-      });
+      if (!isWsConnected) {
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toLocaleString(),
+          type: "error",
+          message: "[-] Team message was not sent: TeamServer is disconnected."
+        });
+        return;
+      }
+
+      try {
+        // The server broadcasts evt.user.message to every client, including
+        // this one. Let that event create the log entry to avoid duplicates.
+        await onSendUserMessage(currentCommand);
+      } catch (error) {
+        onAddLog({
+          id: `log-${Date.now()}`,
+          timestamp: new Date().toLocaleString(),
+          type: "error",
+          message: `[-] Team message was not sent: ${error instanceof Error ? error.message : String(error)}`
+        });
+      }
 
       return;
     }
@@ -1269,7 +1298,16 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       case "scripts":
         return renderScripts();
       case "users":
-        return <UserManager currentUsername={operatorName} />;
+        return (
+          <UserManager
+            users={users}
+            isConnected={isWsConnected}
+            onListUsers={onListUsers}
+            onCreateUser={onCreateUser}
+            onRefreshUserToken={onRefreshUserToken}
+            onDeleteUser={onDeleteUser}
+          />
+        );
       case "packets":
         return renderEventMonitor();
       default:

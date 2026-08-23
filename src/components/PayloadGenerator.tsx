@@ -7,6 +7,7 @@ interface PayloadGeneratorProps {
   onClose: () => void;
   onCreateBuild: (profile: string) => Promise<TeamBuild>;
   onGetBuild: (id: string) => Promise<TeamBuild>;
+  onDownloadBuild: (build: TeamBuild) => Promise<void>;
 }
 
 const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
@@ -16,12 +17,14 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
   isOpen,
   onClose,
   onCreateBuild,
-  onGetBuild
+  onGetBuild,
+  onDownloadBuild
 }) => {
   const [selectedProfile, setSelectedProfile] = useState("");
   const [build, setBuild] = useState<TeamBuild | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -69,6 +72,22 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
       setLogs(previous => [...previous, `ERROR: ${message}`]);
     } finally {
       setIsBuilding(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!build?.download_url || isDownloading) return;
+    setError("");
+    setIsDownloading(true);
+    try {
+      await onDownloadBuild(build);
+      setLogs(previous => [...previous, `Artifact download started: ${build.artifact_name || build.id}`]);
+    } catch (downloadError) {
+      const message = downloadError instanceof Error ? downloadError.message : String(downloadError);
+      setError(message);
+      setLogs(previous => [...previous, `DOWNLOAD ERROR: ${message}`]);
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -131,11 +150,11 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
                 <div className="mt-1 break-all font-mono text-[10px] text-gray-400">{build.download_url}</div>
                 <button
                   type="button"
-                  disabled
-                  title="Requires an explicit same-origin or allowed-origin HTTP deployment policy."
-                  className="mt-2 w-full cursor-not-allowed rounded bg-[#333] px-3 py-1.5 text-gray-500"
+                  onClick={() => void handleDownload()}
+                  disabled={!build.download_url || isDownloading}
+                  className="mt-2 w-full cursor-pointer rounded bg-[#385d8a] px-3 py-1.5 font-bold text-white hover:bg-[#486d9a] disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Artifact download pending HTTP origin configuration
+                  {isDownloading ? "Downloading…" : "Download Artifact"}
                 </button>
               </div>
             )}

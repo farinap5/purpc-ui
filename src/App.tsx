@@ -4,6 +4,7 @@ import { C2Toolbar } from "./components/C2Toolbar";
 import { C2SessionTable } from "./components/C2SessionTable";
 import { C2Console } from "./components/C2Console";
 import { PayloadGenerator } from "./components/PayloadGenerator";
+import { BuildManager } from "./components/BuildManager";
 import { ProfileManager } from "./components/ProfileManager";
 import { SettingsModal } from "./components/SettingsModal";
 import { AuthenticationPage } from "./components/AuthenticationPage";
@@ -13,6 +14,7 @@ import {
   TeamCommand,
   TeamCommandExecuteReply,
   TeamEnvelope,
+  TeamEvents,
   TeamListener,
   TeamLoot,
   TeamLootGetReply,
@@ -23,11 +25,47 @@ import {
   TeamServerClient,
   TeamSession,
   TeamSnapshot,
-  TeamTask
+  TeamTask,
+  TeamUser,
+  TeamUserCredentials,
+  TeamUserMessage
 } from "./api/teamApi";
 
 const MAX_EVENT_MONITOR_EVENTS = 1000;
 const MAX_CONSOLE_LOGS = 1000;
+const USER_STATUS_EVENTS = new Set<string>([
+  TeamEvents.userLogin,
+  TeamEvents.userLogout,
+  TeamEvents.userCreated,
+  TeamEvents.userUpdated
+]);
+
+const sortTeamUsers = (users: TeamUser[]) => [...users].sort((left, right) => {
+  if (left.admin !== right.admin) return left.admin ? -1 : 1;
+  return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+});
+
+const upsertTeamUser = (users: TeamUser[], user: TeamUser) => sortTeamUsers([
+  ...users.filter(item => item.uuid !== user.uuid),
+  user
+]);
+
+const redactSensitiveTraffic = (raw: string) => {
+  const redact = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(redact);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
+      key,
+      key.toLowerCase() === "token" ? "[REDACTED]" : redact(nested)
+    ]));
+  };
+
+  try {
+    return JSON.stringify(redact(JSON.parse(raw)));
+  } catch {
+    return raw;
+  }
+};
 
 const createWebSocketSystemEvent = (action: string, address: string): Packet => ({
   id: `event-${action.toLowerCase()}-${Date.now()}`,
@@ -138,6 +176,7 @@ export default function App() {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
   const [profiles, setProfiles] = useState<TeamProfile[]>([]);
+  const [users, setUsers] = useState<TeamUser[]>([]);
   const [eventLogs, setEventLogs] = useState<ConsoleLog[]>([]);
   const [packets, setPackets] = useState<Packet[]>([]);
 
@@ -160,6 +199,7 @@ export default function App() {
 
   // Modal open states
   const [isPayloadOpen, setIsPayloadOpen] = useState(false);
+  const [isBuildManagerOpen, setIsBuildManagerOpen] = useState(false);
   const [isProfileManagerOpen, setIsProfileManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -264,6 +304,7 @@ export default function App() {
     setScripts(snapshot.scripts.map(mapTeamScript));
     setCommands(snapshot.commands.map(mapTeamCommand));
     setProfiles(snapshot.profiles);
+    setUsers(sortTeamUsers(snapshot.users || []));
     setSelectedSessionId(current => {
       if (current && snapshot.sessions.some(session => session.name === current)) return current;
       return snapshot.sessions[0]?.name ?? null;
@@ -283,16 +324,30 @@ export default function App() {
   const handleServerEvent = async (event: TeamEnvelope, client: TeamServerClient, refreshResources = true) => {
     const eventTime = event.time ? new Date(event.time).toLocaleString() : new Date().toLocaleString();
     const sequence = event.sequence ? ` #${event.sequence}` : "";
+    const userMessage = event.type === TeamEvents.userMessage ? event.data as TeamUserMessage : null;
+    const eventUser = event.type.startsWith("evt.user.") && !userMessage ? event.data as TeamUser : null;
     if (event.type !== "evt.session.checkin") {
       appendLog({
         id: `event-${event.sequence || Date.now()}-${event.type}`,
         timestamp: eventTime,
-        type: event.type === "evt.listener.failed" ? "error" : "system",
-        message: `${event.type}${sequence}`
+        type: event.type === "evt.listener.failed" ? "error" : userMessage ? "input" : "system",
+        message: userMessage?.user
+          ? `<${userMessage.user}> ${userMessage.message}`
+          : eventUser?.name
+          ? `${event.type}${sequence}: ${eventUser.name} (${eventUser.uuid}) · ${eventUser.connected ? "connected" : "offline"}`
+          : `${event.type}${sequence}`
       });
     }
 
-    if (event.type === "evt.loot.created") {
+    if (USER_STATUS_EVENTS.has(event.type)) {
+      const user = event.data as TeamUser;
+      if (user?.uuid) setUsers(previous => upsertTeamUser(previous, user));
+    } else if (event.type === TeamEvents.userDeleted) {
+      const user = event.data as TeamUser;
+      if (user?.uuid || user?.name) {
+        setUsers(previous => previous.filter(item => item.uuid !== user.uuid && item.name !== user.name));
+      }
+    } else if (event.type === "evt.loot.created") {
       const createdLoot = mapTeamLoot(event.data as TeamLoot);
       setLoots(previous => [...previous.filter(item => item.id !== createdLoot.id), createdLoot]);
     } else if (event.type === "evt.loot.deleted") {
@@ -362,7 +417,7 @@ export default function App() {
           type: "WebSocket",
           size: new TextEncoder().encode(raw).byteLength,
           encryption: settings.serverAddress.startsWith("https:") ? "TLS" : "None",
-          payload: raw
+          payload: redactSensitiveTraffic(raw)
         };
         setPackets(previous => [packet, ...previous].slice(0, MAX_EVENT_MONITOR_EVENTS));
       },
@@ -371,6 +426,7 @@ export default function App() {
         if (clientRef.current !== client) return;
         setIsWsConnected(connected);
         if (!connected && reason && reason !== "Operator disconnected") {
+          addLog("system", `${TeamEvents.userLogout}: ${settings.username} · local connection closed`);
           addLog("error", `TeamServer connection lost: ${reason}`);
           setPackets(previous => [
             createWebSocketSystemEvent("CLOSE", settings.serverAddress),
@@ -577,6 +633,35 @@ export default function App() {
     setProfiles(previous => previous.filter(profile => profile.name !== name));
   };
 
+  const handleListUsers = async () => {
+    const listed = await requireTeamClient().request<TeamUser[]>(TeamOperations.userList, {});
+    const sorted = sortTeamUsers(listed);
+    setUsers(sorted);
+    return sorted;
+  };
+
+  const handleCreateUser = async (name: string) => {
+    const credentials = await requireTeamClient().request<TeamUserCredentials>(TeamOperations.userCreate, { name });
+    setUsers(previous => upsertTeamUser(previous, credentials.user));
+    return credentials;
+  };
+
+  const handleRefreshUserToken = async (name: string) => {
+    const credentials = await requireTeamClient().request<TeamUserCredentials>(TeamOperations.userUpdate, { name });
+    setUsers(previous => upsertTeamUser(previous, credentials.user));
+    return credentials;
+  };
+
+  const handleDeleteUser = async (name: string) => {
+    const deleted = await requireTeamClient().request<TeamUser>(TeamOperations.userDelete, { name });
+    setUsers(previous => previous.filter(user => user.uuid !== deleted.uuid && user.name !== deleted.name));
+    return deleted;
+  };
+
+  const handleSendUserMessage = (message: string) => {
+    return requireTeamClient().request<TeamUserMessage>(TeamOperations.userMessage, { message });
+  };
+
   const handleCreateBuild = async (profile: string) => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
@@ -589,6 +674,28 @@ export default function App() {
     return client.request<TeamBuild>(TeamOperations.buildGet, { name: id });
   };
 
+  const handleListBuilds = () => {
+    return requireTeamClient().request<TeamBuild[]>(TeamOperations.buildList, {});
+  };
+
+  const handleDeleteBuild = (id: string) => {
+    return requireTeamClient().request<TeamBuild>(TeamOperations.buildDelete, { id });
+  };
+
+  const handleDownloadBuild = async (build: TeamBuild) => {
+    if (!build.download_url) throw new Error("The completed build has no download URL.");
+    const blob = await requireTeamClient().download(build.download_url);
+    const objectURL = URL.createObjectURL(blob);
+    const fileName = build.artifact_name?.split(/[\\/]/).pop()?.trim() || `${build.id}.bin`;
+    const anchor = document.createElement("a");
+    anchor.href = objectURL;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+  };
+
   const handleAuthenticate = (settings: ConnectionSettings) => connectToTeamServer(settings);
   const handleReconnect = (settings: ConnectionSettings) => connectToTeamServer(settings);
 
@@ -597,7 +704,7 @@ export default function App() {
     clientRef.current.close();
     clientRef.current = null;
     setIsWsConnected(false);
-    addLog("system", `*** ${operatorName} disconnected from ${serverAddress}`);
+    addLog("system", `${TeamEvents.userLogout}: ${operatorName} · local connection closed`);
     setPackets(previous => [createWebSocketSystemEvent("CLOSE", serverAddress), ...previous].slice(0, MAX_EVENT_MONITOR_EVENTS));
   };
 
@@ -633,6 +740,7 @@ export default function App() {
         activeListenersCount={listeners.filter(l => l.status === "Active").length}
         currentLag={currentLag}
         onTriggerPayloadModal={() => setIsPayloadOpen(true)}
+        onTriggerBuildManager={() => setIsBuildManagerOpen(true)}
         onTriggerProfileModal={() => setIsProfileManagerOpen(true)}
         onTriggerSettingsModal={() => setIsSettingsOpen(true)}
       />
@@ -728,6 +836,7 @@ export default function App() {
             commands={commands}
             eventLogs={eventLogs}
             packets={packets}
+            users={users}
             onAddListener={handleAddListener}
             onSetListenerState={handleListenerState}
             onRefreshScripts={handleRefreshScripts}
@@ -737,6 +846,11 @@ export default function App() {
             onDownloadLoot={handleDownloadLoot}
             onLoadLootContent={handleLoadLootContent}
             onDeleteLoot={handleDeleteLoot}
+            onListUsers={handleListUsers}
+            onCreateUser={handleCreateUser}
+            onRefreshUserToken={handleRefreshUserToken}
+            onDeleteUser={handleDeleteUser}
+            onSendUserMessage={handleSendUserMessage}
             onAddLog={appendLog}
             onExecuteCommand={executeSessionCommand}
             isWsConnected={isWsConnected}
@@ -754,6 +868,15 @@ export default function App() {
         onClose={() => setIsPayloadOpen(false)}
         onCreateBuild={handleCreateBuild}
         onGetBuild={handleGetBuild}
+        onDownloadBuild={handleDownloadBuild}
+      />
+
+      <BuildManager
+        isOpen={isBuildManagerOpen}
+        onClose={() => setIsBuildManagerOpen(false)}
+        onList={handleListBuilds}
+        onDelete={handleDeleteBuild}
+        onDownload={handleDownloadBuild}
       />
 
       <ProfileManager

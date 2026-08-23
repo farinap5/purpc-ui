@@ -2,6 +2,7 @@ export const TEAM_API_VERSION = 1;
 export const TEAM_API_SUBPROTOCOL = "purpcmd.v1";
 export const TEAM_API_BROWSER_AUTH_PREFIX = "purpcmd.auth.";
 export const MAX_CONTROL_MESSAGE_BYTES = 1 << 20;
+const COLD_START_REPLAY_LIMIT = 1000;
 
 export const TeamOperations = {
   systemHello: "ask.system.hello",
@@ -25,7 +26,23 @@ export const TeamOperations = {
   profileDelete: "ask.profile.delete",
   buildCreate: "ask.build.create",
   buildGet: "ask.build.get",
-  eventReplay: "ask.event.replay"
+  buildList: "ask.build.list",
+  buildDelete: "ask.build.delete",
+  eventReplay: "ask.event.replay",
+  userCreate: "ask.user.create",
+  userUpdate: "ask.user.update",
+  userDelete: "ask.user.delete",
+  userList: "ask.user.list",
+  userMessage: "ask.user.message"
+} as const;
+
+export const TeamEvents = {
+  userLogin: "evt.user.login",
+  userLogout: "evt.user.logout",
+  userCreated: "evt.user.created",
+  userUpdated: "evt.user.updated",
+  userDeleted: "evt.user.deleted",
+  userMessage: "evt.user.message"
 } as const;
 
 export interface TeamApiErrorPayload {
@@ -148,12 +165,32 @@ export interface TeamBuild {
   download_url?: string;
 }
 
+export interface TeamUser {
+  name: string;
+  uuid: string;
+  admin: boolean;
+  connected: boolean;
+  created: string;
+  last_seen?: string;
+}
+
+export interface TeamUserCredentials {
+  user: TeamUser;
+  token: string;
+}
+
+export interface TeamUserMessage {
+  user: string;
+  message: string;
+}
+
 export interface TeamSnapshot {
   listeners: TeamListener[];
   sessions: TeamSession[];
   scripts: TeamScript[];
   profiles: TeamProfile[];
   commands: TeamCommand[];
+  users: TeamUser[];
   event_sequence: number;
 }
 
@@ -347,7 +384,7 @@ export class TeamServerClient {
     });
     if (!response.ok) {
       const message = (await response.text()).trim();
-      throw new Error(`Loot download failed (${response.status}): ${message || response.statusText}`);
+      throw new Error(`TeamServer download failed (${response.status}): ${message || response.statusText}`);
     }
     return response.blob();
   }
@@ -401,12 +438,14 @@ export class TeamServerClient {
     const hello = await this.request<TeamHelloReply>(TeamOperations.systemHello, {
       last_event_sequence: replayFrom
     });
-    // A new dashboard has no local event continuity to restore. Its snapshot is
-    // the authoritative baseline, so replaying the entire persisted event
-    // database only duplicates state and can block the browser on busy servers.
-    if (!hello.resync_required || replayFrom === 0) return hello;
+    if (!hello.resync_required) return hello;
 
-    let cursor = replayFrom;
+    // A cold dashboard still needs recent connection events, but replaying an
+    // unbounded event database can block a busy browser. Restore at most the
+    // latest monitor-sized window; the snapshot remains the state baseline.
+    let cursor = replayFrom === 0
+      ? Math.max(0, hello.event_sequence - COLD_START_REPLAY_LIMIT)
+      : replayFrom;
     while (cursor < hello.event_sequence) {
       const records = await this.request<TeamEventRecord[]>(TeamOperations.eventReplay, {
         after: cursor,

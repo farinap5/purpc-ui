@@ -24,6 +24,7 @@ interface ToolbarProps {
   activeListenersCount: number;
   currentLag: number;
   onTriggerPayloadModal: () => void;
+  onTriggerBuildManager: () => void;
   onTriggerProfileModal: () => void;
   onTriggerSettingsModal: () => void;
 }
@@ -43,6 +44,7 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
   activeListenersCount,
   currentLag,
   onTriggerPayloadModal,
+  onTriggerBuildManager,
   onTriggerProfileModal,
   onTriggerSettingsModal
 }) => {
@@ -64,25 +66,18 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
       { label: "Event Monitor", action: () => onAddTab("packets", "Event Monitor") }
     ],
     "Payload": [
+      { label: "Payload Generator", action: onTriggerPayloadModal },
+      { label: "Manage Builds", action: onTriggerBuildManager },
       { label: "Profiles", action: onTriggerProfileModal }
     ],
     "Administration": [
       { label: "Manage Users", action: () => onAddTab("users", "User Management") }
     ],
-    "Attacks": [
-      { label: "Spear Phish Emailer", action: () => alert("Opened Spear Phish Module.") },
-      { label: "Web Drive-By (Clone Site)", action: () => alert("Configure Site Cloner on HTTP Listener.") },
-      { label: "Golden Ticket Creator", action: () => alert("Generating Kerberos TGT ticket...") },
-      { label: "Mimikatz Pass-the-Hash", action: () => alert("Choose active administrator session to dispatch.") }
-    ],
     "Site Management": [
       { label: "Manage Web Servers", action: () => alert("HTTP/S web management portal.") },
       { label: "Hosted Files", action: () => alert("Upload files to payload server.") }
     ],
-    "Reporting": [
-      { label: "Activity Report (PDF)", action: () => alert("Compiling Activity Audit trail...") },
-      { label: "Hosts / Targets List", action: () => alert("Compiling discovered hosts report...") }
-    ],
+    "Reporting": [],
     "Help": [
       { label: "About PurpleCommand", action: () => alert("PurpleCommand C2 Dashboard") }
     ]
