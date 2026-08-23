@@ -22,6 +22,19 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   webp: "image/webp"
 };
 
+export interface LootContentPreview {
+  kind: "text" | "hex";
+  content: string;
+  bytesShown: number;
+  totalBytes: number;
+  truncated: boolean;
+}
+
+const TEXT_PREVIEW_LIMIT = 64 * 1024;
+const HEX_PREVIEW_LIMIT = 8 * 1024;
+const TEXT_DETECTION_LIMIT = 8 * 1024;
+const HEX_ROW_BYTES = 16;
+
 const SECRET_PATH_PATTERNS = [
   /(?:^|\/)etc\/(?:passwd|master\.passwd|shadow|gshadow)(?:[-.](?:bak|old|backup|save))?$/,
   /(?:^|\/)etc\/(?:sudoers|security\/opasswd|krb5\.keytab)$/,
@@ -81,4 +94,69 @@ export const isSecretFileName = (fileName: string) => {
 export const imageMimeType = (fileName: string) => {
   const extension = fileExtension(fileName);
   return isKnownImageExtension(extension) ? IMAGE_MIME_TYPES[extension] : "application/octet-stream";
+};
+
+const probableTextEncoding = (bytes: Uint8Array): "utf-8" | "utf-16le" | "utf-16be" | null => {
+  if (bytes.length === 0) return "utf-8";
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return "utf-16le";
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return "utf-16be";
+
+  let evenNulls = 0;
+  let oddNulls = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] === 0) {
+      if (index % 2 === 0) evenNulls += 1;
+      else oddNulls += 1;
+    }
+  }
+
+  const pairCount = Math.max(1, Math.floor(bytes.length / 2));
+  if (pairCount >= 4 && oddNulls / pairCount > 0.3 && evenNulls / pairCount < 0.05) return "utf-16le";
+  if (pairCount >= 4 && evenNulls / pairCount > 0.3 && oddNulls / pairCount < 0.05) return "utf-16be";
+  if (evenNulls + oddNulls > 0) return null;
+
+  const decoded = new TextDecoder("utf-8").decode(bytes);
+  let replacementCharacters = 0;
+  let controlCharacters = 0;
+  for (const character of decoded) {
+    const codePoint = character.codePointAt(0) || 0;
+    if (codePoint === 0xfffd) replacementCharacters += 1;
+    if ((codePoint < 0x20 && codePoint !== 0x09 && codePoint !== 0x0a && codePoint !== 0x0d) || codePoint === 0x7f) {
+      controlCharacters += 1;
+    }
+  }
+  const characterCount = Math.max(1, decoded.length);
+  return replacementCharacters / characterCount <= 0.02 && controlCharacters / characterCount <= 0.02
+    ? "utf-8"
+    : null;
+};
+
+const hexDump = (bytes: Uint8Array) => {
+  const rows: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += HEX_ROW_BYTES) {
+    const row = bytes.slice(offset, offset + HEX_ROW_BYTES);
+    const hexadecimal = Array.from(row, byte => byte.toString(16).padStart(2, "0"));
+    const left = hexadecimal.slice(0, 8).join(" ").padEnd(23, " ");
+    const right = hexadecimal.slice(8).join(" ").padEnd(23, " ");
+    const ascii = Array.from(row, byte => byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : ".").join("");
+    rows.push(`${offset.toString(16).padStart(8, "0")}  ${left}  ${right}  |${ascii.padEnd(HEX_ROW_BYTES, " ")}|`);
+  }
+  return rows.join("\n");
+};
+
+export const createLootContentPreview = async (blob: Blob): Promise<LootContentPreview> => {
+  const detectionBytes = new Uint8Array(await blob.slice(0, TEXT_DETECTION_LIMIT).arrayBuffer());
+  const encoding = probableTextEncoding(detectionBytes);
+  const limit = encoding ? TEXT_PREVIEW_LIMIT : HEX_PREVIEW_LIMIT;
+  const previewBytes = new Uint8Array(await blob.slice(0, limit).arrayBuffer());
+
+  return {
+    kind: encoding ? "text" : "hex",
+    content: encoding
+      ? new TextDecoder(encoding).decode(previewBytes).replace(/^\uFEFF/, "")
+      : hexDump(previewBytes),
+    bytesShown: previewBytes.length,
+    totalBytes: blob.size,
+    truncated: blob.size > previewBytes.length
+  };
 };

@@ -11,7 +11,7 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTab } from "../types";
-import { imageMimeType } from "../utils/loot";
+import { createLootContentPreview, imageMimeType, LootContentPreview } from "../utils/loot";
 import { UserManager } from "./UserManager";
 
 interface CommandExecutionResult {
@@ -100,11 +100,17 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const [isRefreshingLoots, setIsRefreshingLoots] = useState(false);
   const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
   const [imagePreviewErrors, setImagePreviewErrors] = useState<Record<string, string>>({});
+  const [secretPreviews, setSecretPreviews] = useState<Record<string, LootContentPreview>>({});
+  const [secretPreviewErrors, setSecretPreviewErrors] = useState<Record<string, string>>({});
 
   const consoleScrollRef = useRef<HTMLDivElement | null>(null);
   const followOutputByTabRef = useRef<Record<string, boolean>>({});
   const scrollPositionByTabRef = useRef<Record<string, number>>({});
   const imagePreviewUrlsRef = useRef<Record<string, string>>({});
+  const secretPreviewsRef = useRef<Record<string, LootContentPreview>>({});
+  const secretPreviewRequestsRef = useRef<Set<string>>(new Set());
+  const currentSecretIdsRef = useRef<Set<string>>(new Set());
+  const componentMountedRef = useRef(true);
 
   useEffect(() => {
     if (!scripts.some(script => script.id === selectedScriptId)) {
@@ -196,6 +202,58 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     Object.values(imagePreviewUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
     imagePreviewUrlsRef.current = {};
   }, []);
+
+  useEffect(() => {
+    componentMountedRef.current = true;
+    return () => {
+      componentMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const secrets = loots.filter(item => item.type === "Secret" || item.type === "Credential" || item.type === "Token");
+    const currentSecretIds = new Set(secrets.map(item => item.id));
+    currentSecretIdsRef.current = currentSecretIds;
+
+    secretPreviewsRef.current = Object.fromEntries(
+      Object.entries(secretPreviewsRef.current).filter(([id]) => currentSecretIds.has(id))
+    );
+    setSecretPreviews({ ...secretPreviewsRef.current });
+    setSecretPreviewErrors(current => Object.fromEntries(
+      Object.entries(current).filter(([id]) => currentSecretIds.has(id))
+    ));
+
+    const tab = tabs.find(item => item.id === activeTabId);
+    if (tab?.type !== "loots" || !isWsConnected) return;
+
+    secrets.forEach(item => {
+      if (secretPreviewsRef.current[item.id] || secretPreviewRequestsRef.current.has(item.id)) return;
+      secretPreviewRequestsRef.current.add(item.id);
+      const content = item.type === "Secret"
+        ? onLoadLootContent(item.id)
+        : Promise.resolve(new Blob([item.data], { type: "text/plain;charset=utf-8" }));
+      void content
+        .then(createLootContentPreview)
+        .then(preview => {
+          if (!componentMountedRef.current || !currentSecretIdsRef.current.has(item.id)) return;
+          secretPreviewsRef.current[item.id] = preview;
+          setSecretPreviews({ ...secretPreviewsRef.current });
+          setSecretPreviewErrors(current => {
+            const next = { ...current };
+            delete next[item.id];
+            return next;
+          });
+        })
+        .catch(error => {
+          if (!componentMountedRef.current || !currentSecretIdsRef.current.has(item.id)) return;
+          setSecretPreviewErrors(current => ({
+            ...current,
+            [item.id]: error instanceof Error ? error.message : String(error)
+          }));
+        })
+        .finally(() => secretPreviewRequestsRef.current.delete(item.id));
+    });
+  }, [activeTabId, isWsConnected, loots]);
 
   useEffect(() => {
     const container = consoleScrollRef.current;
@@ -778,11 +836,123 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   );
 
   // 4. Secrets
-  const renderSecrets = () => renderLootTable(
-    "Secrets",
-    loots.filter(item => item.type === "Secret" || item.type === "Credential" || item.type === "Token"),
-    <Key className="mr-1 h-3.5 w-3.5 text-gray-400" />
-  );
+  const renderSecrets = () => {
+    const secrets = loots.filter(item => item.type === "Secret" || item.type === "Credential" || item.type === "Token");
+    return (
+      <div className="flex h-full flex-col overflow-hidden bg-[#1e1e1e] p-3 font-sans text-gray-300">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
+            <Key className="mr-1 h-3.5 w-3.5 text-gray-400" />
+            <span>Secrets</span>
+            <span className="ml-2 font-normal text-gray-500">({secrets.length})</span>
+          </h3>
+          <button
+            type="button"
+            disabled={isRefreshingLoots || !isWsConnected}
+            onClick={() => void refreshLoots()}
+            className="flex items-center gap-1.5 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${isRefreshingLoots ? "animate-spin" : ""}`} />
+            {isRefreshingLoots ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+
+        {lootActionError && (
+          <p className="mb-2 rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">
+            {lootActionError}
+          </p>
+        )}
+
+        <div className="flex-1 overflow-auto rounded border border-[#333] bg-[#191919] p-3">
+          <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+            {secrets.map(item => {
+              const preview = secretPreviews[item.id];
+              const previewError = secretPreviewErrors[item.id];
+              return (
+                <article key={item.id} className="flex min-w-0 flex-col overflow-hidden rounded border border-[#383838] bg-[#252525]">
+                  <div className="flex min-w-0 items-start justify-between gap-3 border-b border-[#333] p-2.5">
+                    <div className="min-w-0">
+                      <div className="select-text break-all font-mono text-xs font-bold text-white">{item.data}</div>
+                      <div className="mt-1 text-[10px] text-gray-500">
+                        Session <span className="select-text text-gray-300">{item.sourceSession || "—"}</span>
+                        <span className="mx-1.5 text-gray-700">•</span>
+                        {item.capturedAt}
+                      </div>
+                    </div>
+                    <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase ${
+                      preview?.kind === "hex"
+                        ? "border-amber-800/70 bg-amber-950/30 text-amber-300"
+                        : "border-purple-800/70 bg-purple-950/30 text-purple-300"
+                    }`}>
+                      {preview?.kind === "hex"
+                        ? "Hexdump"
+                        : preview?.kind === "text" ? "Text" : previewError ? "Error" : "Detecting"}
+                    </span>
+                  </div>
+
+                  <div className="h-60 overflow-auto bg-[#111] p-3 font-mono text-[10px] leading-4 text-gray-300">
+                    {preview ? (
+                      <pre className="min-w-max select-text whitespace-pre">{preview.content || "(empty file)"}</pre>
+                    ) : previewError ? (
+                      <div className="flex h-full items-center justify-center p-4 text-center text-red-300">
+                        <div>
+                          <p>Preview unavailable</p>
+                          <p className="mt-1 break-words text-red-400/70">{previewError}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-gray-600">
+                        Loading authenticated preview…
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#333] p-2.5">
+                    <div className="min-w-0 text-[10px] text-gray-500">
+                      {preview && (
+                        <span>
+                          {preview.truncated ? "Showing" : "Previewed"} {preview.bytesShown.toLocaleString()} of {preview.totalBytes.toLocaleString()} bytes
+                        </span>
+                      )}
+                      {!preview && item.size !== undefined && <span>{item.size.toLocaleString()} bytes</span>}
+                      <span className="mx-1.5 text-gray-700">•</span>
+                      <span className="select-text font-mono" title={item.id}>{item.id}</span>
+                    </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      <button
+                        type="button"
+                        disabled={Boolean(lootActionId) || !isWsConnected}
+                        onClick={() => void runLootAction("download", item.id)}
+                        className="flex items-center gap-1 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Download className="h-3 w-3" />
+                        {lootActionId === `download:${item.id}` ? "Downloading…" : "Download"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(lootActionId) || !isWsConnected}
+                        onClick={() => void runLootAction("delete", item.id)}
+                        className="flex items-center gap-1 rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        {lootActionId === `delete:${item.id}` ? "Deleting…" : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          {secrets.length === 0 && (
+            <div className="flex h-full min-h-40 items-center justify-center text-xs text-gray-600">
+              No secrets have been collected.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   // 5. Downloaded Files
   const renderDownloads = () => renderLootTable(
@@ -820,9 +990,9 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
         )}
 
         <div className="flex-1 overflow-auto rounded border border-[#333] bg-[#191919] p-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          <div className="flex flex-wrap items-start gap-3">
             {images.map(item => (
-              <article key={item.id} className="flex min-w-0 flex-col overflow-hidden rounded border border-[#383838] bg-[#252525]">
+              <article key={item.id} className="flex w-[418px] max-w-full min-w-0 flex-col overflow-hidden rounded border border-[#383838] bg-[#252525]">
                 <div className="flex h-48 items-center justify-center overflow-hidden border-b border-[#333] bg-[#111]">
                   {imagePreviewUrls[item.id] ? (
                     <img
