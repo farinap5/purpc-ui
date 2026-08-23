@@ -68,7 +68,7 @@ export function simulateDecrypt(ciphertextHex: string, originalPlaintext: string
 export function getCommandOutput(command: string, sessionUser: string, sessionComputer: string, pid: number): {
   response: string;
   lootsGenerated?: {
-    type: "Credential" | "Screenshot" | "File" | "Token";
+    type: "Credential" | "Image" | "File" | "Token";
     data: string;
     description: string;
   }[];
@@ -161,9 +161,9 @@ exit             De-register and secure clean exit         exit
       response: `[*] Tasking session to snap active display (Session ID: 1)\n` +
         `[+] Screen grab completed (Format: JPEG, Size: 184 KB)\n` +
         `[+] Decrypting pixel blocks... verified GCM integrity.\n` +
-        `[+] Screenshot captured and dispatched to Loot tab under ID LT-SCREEN.`,
+        `[+] Image captured and dispatched to the Images tab under ID LT-SCREEN.`,
       lootsGenerated: [{
-        type: "Screenshot",
+        type: "Image",
         data: pickedUrl,
         description: `Active screen of ${sessionUser}@${sessionComputer} containing sensitive terminal logs`
       }]

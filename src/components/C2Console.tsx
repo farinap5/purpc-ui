@@ -11,6 +11,7 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTab } from "../types";
+import { imageMimeType } from "../utils/loot";
 import { UserManager } from "./UserManager";
 
 interface CommandExecutionResult {
@@ -39,6 +40,7 @@ interface C2ConsoleProps {
   onUnloadScript: (path: string) => Promise<void>;
   onRefreshLoots: () => Promise<Loot[]>;
   onDownloadLoot: (id: string) => Promise<void>;
+  onLoadLootContent: (id: string) => Promise<Blob>;
   onDeleteLoot: (id: string) => Promise<void>;
   onAddLog: (log: ConsoleLog) => void;
   onExecuteCommand: (sessionId: string, commandLine: string) => Promise<CommandExecutionResult>;
@@ -66,6 +68,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   onUnloadScript,
   onRefreshLoots,
   onDownloadLoot,
+  onLoadLootContent,
   onDeleteLoot,
   onAddLog,
   onExecuteCommand,
@@ -95,10 +98,13 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const [lootActionId, setLootActionId] = useState("");
   const [lootActionError, setLootActionError] = useState("");
   const [isRefreshingLoots, setIsRefreshingLoots] = useState(false);
+  const [imagePreviewUrls, setImagePreviewUrls] = useState<Record<string, string>>({});
+  const [imagePreviewErrors, setImagePreviewErrors] = useState<Record<string, string>>({});
 
   const consoleScrollRef = useRef<HTMLDivElement | null>(null);
   const followOutputByTabRef = useRef<Record<string, boolean>>({});
   const scrollPositionByTabRef = useRef<Record<string, number>>({});
+  const imagePreviewUrlsRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     if (!scripts.some(script => script.id === selectedScriptId)) {
@@ -121,7 +127,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
   useEffect(() => {
     const tab = tabs.find(item => item.id === activeTabId);
-    if (tab?.type !== "loots" && tab?.type !== "downloads") return;
+    if (tab?.type !== "loots" && tab?.type !== "downloads" && tab?.type !== "images") return;
 
     setLootActionError("");
     setIsRefreshingLoots(true);
@@ -129,6 +135,67 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       .catch(error => setLootActionError(error instanceof Error ? error.message : String(error)))
       .finally(() => setIsRefreshingLoots(false));
   }, [activeTabId]);
+
+  useEffect(() => {
+    const images = loots.filter(item => item.type === "Image");
+    const currentImageIds = new Set(images.map(item => item.id));
+    let previewSetChanged = false;
+
+    Object.entries(imagePreviewUrlsRef.current).forEach(([id, url]) => {
+      if (!currentImageIds.has(id)) {
+        URL.revokeObjectURL(url);
+        delete imagePreviewUrlsRef.current[id];
+        previewSetChanged = true;
+      }
+    });
+    if (previewSetChanged) setImagePreviewUrls({ ...imagePreviewUrlsRef.current });
+    setImagePreviewErrors(current => Object.fromEntries(
+      Object.entries(current).filter(([id]) => currentImageIds.has(id))
+    ));
+
+    const tab = tabs.find(item => item.id === activeTabId);
+    if (tab?.type !== "images") return;
+
+    let cancelled = false;
+    images.forEach(item => {
+      if (imagePreviewUrlsRef.current[item.id]) return;
+      void onLoadLootContent(item.id)
+        .then(blob => {
+          const previewBlob = blob.type.startsWith("image/")
+            ? blob
+            : new Blob([blob], { type: imageMimeType(item.data) });
+          const previewUrl = URL.createObjectURL(previewBlob);
+          if (cancelled) {
+            URL.revokeObjectURL(previewUrl);
+            return;
+          }
+          imagePreviewUrlsRef.current[item.id] = previewUrl;
+          setImagePreviewUrls({ ...imagePreviewUrlsRef.current });
+          setImagePreviewErrors(current => {
+            const next = { ...current };
+            delete next[item.id];
+            return next;
+          });
+        })
+        .catch(error => {
+          if (!cancelled) {
+            setImagePreviewErrors(current => ({
+              ...current,
+              [item.id]: error instanceof Error ? error.message : String(error)
+            }));
+          }
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, loots]);
+
+  useEffect(() => () => {
+    Object.values(imagePreviewUrlsRef.current).forEach(url => URL.revokeObjectURL(url));
+    imagePreviewUrlsRef.current = {};
+  }, []);
 
   useEffect(() => {
     const container = consoleScrollRef.current;
@@ -710,10 +777,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     </div>
   );
 
-  // 4. Loots
-  const renderLoots = () => renderLootTable(
-    "TeamServer Loot",
-    loots,
+  // 4. Secrets
+  const renderSecrets = () => renderLootTable(
+    "Secrets",
+    loots.filter(item => item.type === "Secret" || item.type === "Credential" || item.type === "Token"),
     <Key className="mr-1 h-3.5 w-3.5 text-gray-400" />
   );
 
@@ -724,27 +791,108 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     <Download className="mr-1 h-3.5 w-3.5 text-gray-400" />
   );
 
-  // 6. Screenshots
-  const renderScreenshots = () => {
-    const screens = loots.filter(l => l.type === "Screenshot");
+  // 6. Images
+  const renderImages = () => {
+    const images = loots.filter(item => item.type === "Image");
     return (
-      <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-auto flex flex-col font-sans">
-        <h3 className="text-xs font-bold text-gray-200 mb-2 uppercase flex items-center">
-          <ImageIcon className="w-3.5 h-3.5 mr-1 text-gray-400" />
-          <span>Target Screenshots</span>
-        </h3>
+      <div className="flex h-full flex-col overflow-hidden bg-[#1e1e1e] p-3 font-sans text-gray-300">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
+            <ImageIcon className="mr-1 h-3.5 w-3.5 text-gray-400" />
+            <span>Device Images</span>
+            <span className="ml-2 font-normal text-gray-500">({images.length})</span>
+          </h3>
+          <button
+            type="button"
+            disabled={isRefreshingLoots || !isWsConnected}
+            onClick={() => void refreshLoots()}
+            className="flex items-center gap-1.5 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${isRefreshingLoots ? "animate-spin" : ""}`} />
+            {isRefreshingLoots ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-          {screens.map(s => (
-            <div key={s.id} className="bg-[#252525] border border-[#333333] rounded p-2 text-xs flex flex-col">
-              <img src={s.data} alt="Screenshot" className="w-full h-36 object-cover rounded mb-2" />
-              <div className="font-bold text-white flex justify-between">
-                <span>Session: {s.sourceSession}</span>
-                <span className="text-gray-500 text-[10px]">{s.capturedAt}</span>
-              </div>
-              <p className="text-gray-400 text-[11px] mt-1">{s.description}</p>
+        {lootActionError && (
+          <p className="mb-2 rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">
+            {lootActionError}
+          </p>
+        )}
+
+        <div className="flex-1 overflow-auto rounded border border-[#333] bg-[#191919] p-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+            {images.map(item => (
+              <article key={item.id} className="flex min-w-0 flex-col overflow-hidden rounded border border-[#383838] bg-[#252525]">
+                <div className="flex h-48 items-center justify-center overflow-hidden border-b border-[#333] bg-[#111]">
+                  {imagePreviewUrls[item.id] ? (
+                    <img
+                      src={imagePreviewUrls[item.id]}
+                      alt={item.data}
+                      onError={() => {
+                        const failedUrl = imagePreviewUrlsRef.current[item.id];
+                        if (failedUrl) URL.revokeObjectURL(failedUrl);
+                        delete imagePreviewUrlsRef.current[item.id];
+                        setImagePreviewUrls({ ...imagePreviewUrlsRef.current });
+                        setImagePreviewErrors(current => ({
+                          ...current,
+                          [item.id]: "This image format cannot be previewed by the system WebView."
+                        }));
+                      }}
+                      className="h-full w-full select-none object-contain"
+                    />
+                  ) : imagePreviewErrors[item.id] ? (
+                    <div className="p-4 text-center text-[10px] text-red-300">
+                      <p>Preview unavailable</p>
+                      <p className="mt-1 break-words text-red-400/70">{imagePreviewErrors[item.id]}</p>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-gray-600">Loading authenticated preview…</div>
+                  )}
+                </div>
+
+                <div className="flex min-h-0 flex-1 flex-col p-2.5">
+                  <div className="select-text break-all font-mono text-xs font-bold text-white">{item.data}</div>
+                  <dl className="mt-2 grid grid-cols-[70px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10px]">
+                    <dt className="text-gray-600">Session</dt>
+                    <dd className="select-text truncate text-gray-300" title={item.sourceSession}>{item.sourceSession || "—"}</dd>
+                    <dt className="text-gray-600">Created</dt>
+                    <dd className="text-gray-400">{item.capturedAt}</dd>
+                    <dt className="text-gray-600">Size</dt>
+                    <dd className="text-gray-400">{item.size === undefined ? "—" : `${item.size.toLocaleString()} B`}</dd>
+                    <dt className="text-gray-600">UUID</dt>
+                    <dd className="select-text truncate font-mono text-gray-500" title={item.id}>{item.id}</dd>
+                  </dl>
+
+                  <div className="mt-3 flex justify-end gap-1.5 border-t border-[#333] pt-2">
+                    <button
+                      type="button"
+                      disabled={Boolean(lootActionId) || !isWsConnected}
+                      onClick={() => void runLootAction("download", item.id)}
+                      className="flex items-center gap-1 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Download className="h-3 w-3" />
+                      {lootActionId === `download:${item.id}` ? "Downloading…" : "Download"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={Boolean(lootActionId) || !isWsConnected}
+                      onClick={() => void runLootAction("delete", item.id)}
+                      className="flex items-center gap-1 rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      {lootActionId === `delete:${item.id}` ? "Deleting…" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          {images.length === 0 && (
+            <div className="flex h-full min-h-40 items-center justify-center text-xs text-gray-600">
+              No images have been collected.
             </div>
-          ))}
+          )}
         </div>
       </div>
     );
@@ -943,11 +1091,11 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       case "listeners":
         return renderListeners();
       case "loots":
-        return renderLoots();
+        return renderSecrets();
       case "downloads":
         return renderDownloads();
-      case "screenshots":
-        return renderScreenshots();
+      case "images":
+        return renderImages();
       case "scripts":
         return renderScripts();
       case "users":

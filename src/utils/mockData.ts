@@ -148,7 +148,7 @@ export const initialLoots: Loot[] = [
   },
   {
     id: "LT-3",
-    type: "Screenshot",
+    type: "Image",
     sourceSession: "S-2616",
     capturedAt: "08/16 17:02:15",
     data: "https://images.unsplash.com/photo-1531403009284-440f080d1e12?w=800&auto=format&fit=crop&q=60",

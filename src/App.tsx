@@ -7,6 +7,7 @@ import { PayloadGenerator } from "./components/PayloadGenerator";
 import { ProfileManager } from "./components/ProfileManager";
 import { SettingsModal } from "./components/SettingsModal";
 import { AuthenticationPage } from "./components/AuthenticationPage";
+import { isImageFileName, isSecretFileName } from "./utils/loot";
 import {
   TeamBuild,
   TeamCommand,
@@ -73,9 +74,13 @@ const mapTeamListener = (listener: TeamListener): Listener => ({
 });
 
 const mapTeamLoot = (loot: TeamLoot): Loot => {
+  const type: Loot["type"] = isImageFileName(loot.file_name)
+    ? "Image"
+    : isSecretFileName(loot.file_name) ? "Secret" : "File";
+
   return {
     id: loot.uuid,
-    type: "File",
+    type,
     sourceSession: loot.session,
     capturedAt: loot.created_at ? new Date(loot.created_at).toLocaleString() : "—",
     data: loot.file_name,
@@ -471,6 +476,12 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
   };
 
+  const handleLoadLootContent = async (id: string) => {
+    const client = requireTeamClient();
+    const reply = await client.request<TeamLootGetReply>(TeamOperations.lootGet, { uuid: id });
+    return client.download(reply.download_url);
+  };
+
   const handleDeleteLoot = async (id: string) => {
     const deleted = await requireTeamClient().request<TeamLoot>(TeamOperations.lootDelete, { uuid: id });
     setLoots(previous => previous.filter(item => item.id !== (deleted.uuid || id)));
@@ -724,6 +735,7 @@ export default function App() {
             onUnloadScript={handleUnloadScript}
             onRefreshLoots={handleRefreshLoots}
             onDownloadLoot={handleDownloadLoot}
+            onLoadLootContent={handleLoadLootContent}
             onDeleteLoot={handleDeleteLoot}
             onAddLog={appendLog}
             onExecuteCommand={executeSessionCommand}

@@ -58,9 +58,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
     "View": [
       { label: "Active Sessions (Grid)", action: () => onAddTab("sessions", "Active Sessions") },
       { label: "Event Log", action: () => onAddTab("event_log", "Event Log") },
-      { label: "Loot Metadata", action: () => onAddTab("loots", "Loot Metadata") },
+      { label: "Secrets", action: () => onAddTab("loots", "Secrets") },
       { label: "Downloaded Files", action: () => onAddTab("downloads", "Loot: Files") },
-      { label: "Screenshots Viewer", action: () => onAddTab("screenshots", "Loot: Screenshots") },
+      { label: "Images", action: () => onAddTab("images", "Loot: Images") },
       { label: "Event Monitor", action: () => onAddTab("packets", "Event Monitor") }
     ],
     "Payload": [
@@ -196,9 +196,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
           </button>
 
           <button
-            onClick={() => onAddTab("loots", "Loot Database")}
-            title="TeamServer Loot Metadata"
-            aria-label="TeamServer Loot Metadata"
+            onClick={() => onAddTab("loots", "Secrets")}
+            title="Secrets"
+            aria-label="Secrets"
             className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
             <Key className="w-3.5 h-3.5 text-gray-400" />
@@ -214,9 +214,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
           </button>
 
           <button
-            onClick={() => onAddTab("screenshots", "Target Screenshots")}
-            title="Loot: Captured Screens"
-            aria-label="Captured Target Screens"
+            onClick={() => onAddTab("images", "Device Images")}
+            title="Images collected from devices"
+            aria-label="Device Images"
             className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
             <Camera className="w-3.5 h-3.5 text-gray-400" />
