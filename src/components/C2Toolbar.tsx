@@ -35,6 +35,21 @@ interface MenuItem {
   disabled?: boolean;
 }
 
+interface WailsRuntimeWindow extends Window {
+  runtime?: {
+    Quit: () => void;
+  };
+}
+
+const exitC2Interface = () => {
+  const runtime = (window as WailsRuntimeWindow).runtime;
+  if (runtime?.Quit) {
+    runtime.Quit();
+    return;
+  }
+  window.close();
+};
+
 export const C2Toolbar: React.FC<ToolbarProps> = ({
   onAddTab,
   isWsConnected,
@@ -55,7 +70,7 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
       { label: "Connect to TeamServer", action: onConnectWs, disabled: isWsConnected },
       { label: "Disconnect from TeamServer", action: onDisconnectWs, disabled: !isWsConnected },
       { label: "Export Session Log", action: () => alert("Exporting logs...") },
-      { label: "Exit C2 Interface", action: () => window.close() }
+      { label: "Exit C2 Interface", action: exitC2Interface }
     ],
     "View": [
       { label: "Active Sessions (Grid)", action: () => onAddTab("sessions", "Active Sessions") },

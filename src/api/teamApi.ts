@@ -130,8 +130,17 @@ export interface TeamProfile {
   lhost: string;
   os: string;
   arch: string;
-  uri: string;
-  ua: string;
+  os_options: string[];
+  arch_options: string[];
+  protocol: string;
+  options: Record<string, unknown>;
+  ots?: string;
+  ots_configured: boolean;
+  ots_expires_at?: string;
+  ots_used_at?: string;
+  config_version?: number;
+  definition_created_at?: string;
+  definition_updated_at?: string;
   output: string;
   template: string;
   public_key: string;
@@ -142,8 +151,11 @@ export type TeamProfileUpdateKey =
   | "LHOST"
   | "OS"
   | "ARCH"
-  | "URI"
-  | "UA"
+  | "PROTOCOL"
+  | "OPTIONS"
+  | "OTS"
+  | "OTS_CLEAR"
+  | "OTS_EXPIRES_AT"
   | "OUTPUT"
   | "TEMPLATE"
   | "PUBLICKEY";

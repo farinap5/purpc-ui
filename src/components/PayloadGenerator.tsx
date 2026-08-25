@@ -127,7 +127,6 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
                 <dt className="text-gray-500">Type</dt><dd>{activeProfile.type}</dd>
                 <dt className="text-gray-500">Target</dt><dd>{activeProfile.os} / {activeProfile.arch}</dd>
                 <dt className="text-gray-500">LHOST</dt><dd>{activeProfile.lhost}</dd>
-                <dt className="text-gray-500">URI</dt><dd className="break-all">{activeProfile.uri}</dd>
                 <dt className="text-gray-500">Output</dt><dd>{activeProfile.output}</dd>
                 <dt className="text-gray-500">Template</dt><dd className="break-all">{activeProfile.template}</dd>
               </dl>
