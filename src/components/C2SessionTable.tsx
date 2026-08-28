@@ -6,6 +6,14 @@ import {
   Edit3, 
   Monitor
 } from "lucide-react";
+import {
+  CompactButton,
+  CompactIconButton,
+  CompactInput,
+  CompactScrollbar,
+  DataGrid,
+  DesktopPanel
+} from "./desktop";
 
 interface SessionTableProps {
   sessions: Session[];
@@ -237,9 +245,9 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
           updateColumnWidth(key, minimumColumnWidths[key]);
         }
       }}
-      className="group absolute right-0 top-0 z-20 h-full w-2 translate-x-1/2 cursor-col-resize touch-none outline-none"
+      className="session-column-resizer"
     >
-      <span className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-[#8da2c2] group-focus:bg-[#8da2c2]" />
+      <span />
     </span>
   );
 
@@ -300,11 +308,11 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
     : undefined;
 
   return (
-    <div className="relative flex flex-col h-full bg-[#2a2a2a] border border-[#1e1e1e] select-none text-xs font-mono">
-      {/* Table Grid Container */}
-      <div ref={tableContainerRef} className="overflow-auto flex-1 min-h-0">
-        <table
-          className="table-fixed text-left border-collapse whitespace-nowrap text-[#d0d0d0] [&_td]:overflow-hidden [&_td]:text-ellipsis"
+    <DesktopPanel className="session-grid-panel">
+      <CompactScrollbar ref={tableContainerRef} className="session-grid-scroll">
+        <DataGrid
+          aria-label="TeamServer sessions"
+          className="session-grid"
           style={{ width: `${tableWidth}px` }}
         >
           <colgroup>
@@ -312,14 +320,12 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
               <col key={column.key} style={{ width: `${columnWidths[column.key]}px` }} />
             ))}
           </colgroup>
-          <thead className="bg-[#242424] text-[#a0a0a0] sticky top-0 border-b border-[#333333] z-10 font-sans">
+          <thead>
             <tr>
-              {sessionColumns.map((column, index) => (
+              {sessionColumns.map((column) => (
                 <th
                   key={column.key}
-                  className={`relative px-2 py-1 font-normal text-[11px] ${
-                    index < sessionColumns.length - 1 ? "border-r border-[#333333]" : ""
-                  } ${column.key === "type" ? "text-center" : ""}`}
+                  className={`${column.key === "type" ? "text-center" : ""}`}
                 >
                   <span className="block overflow-hidden text-ellipsis">{column.label}</span>
                   {renderColumnResizeHandle(column.key, column.accessibleLabel)}
@@ -327,7 +333,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#282828] bg-[#2b2b2b]">
+          <tbody>
             {sessions.map((session) => {
               const isSelected = selectedSessionId === session.id;
               const isKilled = session.status === "killed";
@@ -345,17 +351,18 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                   onClick={() => onSelectSession(session.id)}
                   onDoubleClick={() => !isKilled && onInteract(session)}
                   onContextMenu={(e) => handleContextMenu(e, session.id)}
+                  aria-selected={isSelected}
                   title={isUnhealthy
                     ? `Session unhealthy: no callback for ${lastDisplay} (threshold ${formatLastActive(unhealthyThreshold)})`
                     : undefined}
-                  className={`cursor-pointer transition-colors duration-75 ${
+                  className={`session-row ${
                     isKilled
-                      ? "bg-[#1f1a1a] text-gray-500 line-through"
+                      ? "is-killed"
                       : isUnhealthy
-                        ? "bg-[#5a2020] text-red-100 hover:bg-[#6b2828]"
+                        ? "is-unhealthy"
                         : isSelected
-                          ? "bg-[#385d8a] text-white"
-                          : "hover:bg-[#343434] text-[#d0d0d0]"
+                          ? "is-selected"
+                          : ""
                   }`}
                 >
                   {/* type */}
@@ -397,35 +404,35 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                   <td className="px-2 py-0.5 border-r border-[#282828] truncate">
                     {editingNoteId === session.id ? (
                       <div className="flex items-center space-x-1" onClick={e => e.stopPropagation()}>
-                        <input
+                        <CompactInput
                           type="text"
                           value={noteValue}
                           onChange={(e) => setNoteValue(e.target.value)}
                           onKeyDown={(e) => e.key === "Enter" && saveNote(session.id)}
-                          className="bg-[#181818] border border-[#555] text-white text-[11px] px-1 py-0.5 rounded outline-none w-full"
+                          className="session-note-input"
                           autoFocus
                         />
-                        <button 
+                        <CompactButton
                           onClick={() => saveNote(session.id)} 
-                          className="text-[10px] bg-[#454545] text-white px-1 py-0.5 rounded cursor-pointer"
                         >
                           Save
-                        </button>
+                        </CompactButton>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between w-full group">
                         <span>{session.note || ""}</span>
                         {!isKilled && (
-                          <button
+                          <CompactIconButton
                             onClick={(e) => {
                               e.stopPropagation();
                               startEditingNote(session);
                             }}
-                            className="hidden group-hover:inline-block text-gray-400 hover:text-white cursor-pointer ml-1"
+                            className="session-note-edit hidden group-hover:inline-flex"
                             title="Edit Note"
+                            aria-label={`Edit note for ${session.id}`}
                           >
-                            <Edit3 className="w-3 h-3 text-gray-400" />
-                          </button>
+                            <Edit3 />
+                          </CompactIconButton>
                         )}
                       </div>
                     )}
@@ -461,14 +468,14 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
               );
             })}
           </tbody>
-        </table>
-      </div>
+        </DataGrid>
+      </CompactScrollbar>
 
       {/* Context Menu Overlay - All icons uniform text-gray-400 */}
       {contextMenu && (
         <div
           style={{ top: contextMenu.y - 10, left: contextMenu.x + 5 }}
-          className="fixed bg-[#252628] border border-[#3E4042] text-[#E0E0E0] rounded shadow-2xl z-50 py-1 w-52 text-xs font-sans divide-y divide-[#323438]"
+          className="session-context-menu"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Section 1: Interaction */}
@@ -479,7 +486,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                 if (contextSession && contextSession.status !== "killed") onInteract(contextSession);
                 setContextMenu(null);
               }}
-              className="w-full text-left px-3 py-1.5 hover:bg-[#3D4044] hover:text-white flex items-center space-x-2 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              className="session-context-action"
             >
               <Terminal className="w-3.5 h-3.5 text-gray-400" />
               <span>Interact (Terminal)</span>
@@ -494,7 +501,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                 if (b) startEditingNote(b);
                 setContextMenu(null);
               }}
-              className="w-full text-left px-3 py-1.5 hover:bg-[#3D4044] hover:text-white flex items-center space-x-2 cursor-pointer"
+              className="session-context-action"
             >
               <Edit3 className="w-3.5 h-3.5 text-gray-400" />
               <span>Add custom note...</span>
@@ -509,7 +516,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                 onKill(contextMenu.sessionId);
                 setContextMenu(null);
               }}
-              className="w-full text-left px-3 py-1.5 hover:bg-[#3D4044] hover:text-white flex items-center space-x-2 text-gray-300 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              className="session-context-action"
             >
               <Trash2 className="w-3.5 h-3.5 text-gray-400" />
               <span>Kill Session</span>
@@ -519,7 +526,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                 onDelete(contextMenu.sessionId);
                 setContextMenu(null);
               }}
-              className="w-full text-left px-3 py-1.5 hover:bg-red-950 hover:text-red-100 flex items-center space-x-2 text-red-300 cursor-pointer"
+              className="session-context-action is-danger"
             >
               <Trash2 className="w-3.5 h-3.5 text-red-400" />
               <span>Delete Session</span>
@@ -527,6 +534,6 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </DesktopPanel>
   );
 };

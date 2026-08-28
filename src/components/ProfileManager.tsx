@@ -1,5 +1,17 @@
 import React, { useEffect, useState } from "react";
 import { TeamProfile, TeamProfileUpdateKey } from "../api/teamApi";
+import {
+  CompactButton,
+  CompactCheckbox,
+  CompactFormGrid,
+  CompactFormRow,
+  CompactInput,
+  CompactScrollbar,
+  CompactTextArea,
+  DesktopModal,
+  DesktopPanel,
+  PanelHeader
+} from "./desktop";
 
 interface ProfileManagerProps {
   isOpen: boolean;
@@ -354,23 +366,18 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 font-sans text-xs text-gray-300">
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded border border-[#3E4044] bg-[#242528] shadow-2xl">
-        <header className="flex items-center justify-between border-b border-[#3E4044] bg-[#1C1D1F] px-4 py-3">
-          <div>
-            <h2 className="font-bold text-gray-100">Implant Profiles</h2>
-            <p className="mt-0.5 text-[10px] text-gray-500">Manage TeamServer implant build configurations.</p>
-          </div>
-          <button type="button" onClick={onClose} className="cursor-pointer rounded px-2 py-1 text-gray-400 hover:bg-[#333] hover:text-white">Close</button>
-        </header>
-
-        <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[240px_1fr]">
-          <aside className="flex min-h-40 flex-col border-b border-[#3E4044] bg-[#1A1B1D] p-3 md:border-b-0 md:border-r">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="font-bold text-gray-300">Profiles</span>
-              <button type="button" onClick={beginCreate} disabled={isSaving} className="cursor-pointer rounded bg-[#385d8a] px-2 py-1 text-white hover:bg-[#486d9a] disabled:opacity-50">New</button>
-            </div>
-            <div className="min-h-0 flex-1 space-y-1 overflow-auto">
+    <DesktopModal
+      title="Implant Profiles"
+      subtitle="TeamServer implant build configurations"
+      onClose={onClose}
+      width="900px"
+    >
+        <div className="profile-manager-split">
+          <DesktopPanel className="profile-browser">
+            <PanelHeader actions={
+              <CompactButton type="button" onClick={beginCreate} disabled={isSaving} variant="primary">New</CompactButton>
+            }>Profiles</PanelHeader>
+            <CompactScrollbar className="profile-list" role="listbox" aria-label="Implant profiles">
               {isLoading && profiles.length === 0 && <p className="p-2 text-gray-600">Loading profiles…</p>}
               {!isLoading && profiles.length === 0 && <p className="p-2 text-gray-600">No profiles.</p>}
               {profiles.map(profile => (
@@ -379,55 +386,52 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                   type="button"
                   onClick={() => void loadProfile(profile.name)}
                   disabled={isSaving}
-                  className={`w-full cursor-pointer rounded border px-2 py-2 text-left disabled:opacity-50 ${
-                    !isCreating && selectedName === profile.name
-                      ? "border-[#486d9a] bg-[#385d8a] text-white"
-                      : "border-[#303236] bg-[#242528] text-gray-300 hover:bg-[#303236]"
-                  }`}
+                  role="option"
+                  aria-selected={!isCreating && selectedName === profile.name}
+                  className={`profile-list-item ${!isCreating && selectedName === profile.name ? "is-selected" : ""}`}
                 >
-                  <span className="block truncate font-bold">{profile.name}</span>
-                  <span className="mt-0.5 block truncate text-[10px] opacity-60">{profile.type} · {profile.os}/{profile.arch}</span>
+                  <span>{profile.name}</span>
+                  <small>{profile.type} · {profile.os}/{profile.arch}</small>
                 </button>
               ))}
+            </CompactScrollbar>
+            <div className="profile-browser-footer">
+              <CompactButton type="button" onClick={() => void refresh()} disabled={isLoading || isSaving}>Refresh</CompactButton>
             </div>
-            <button type="button" onClick={() => void refresh()} disabled={isLoading || isSaving} className="mt-2 cursor-pointer rounded border border-[#3E4044] px-2 py-1.5 text-gray-400 hover:bg-[#303236] hover:text-white disabled:opacity-50">Refresh</button>
-          </aside>
+          </DesktopPanel>
 
-          <main className="min-h-0 overflow-auto p-4">
-            <div className="mb-4 flex items-end justify-between border-b border-[#333] pb-3">
-              <div>
-                <h3 className="font-bold text-gray-100">{isCreating ? "Create profile" : original ? original.name : "Select a profile"}</h3>
-                {original && <p className="mt-0.5 text-[10px] text-gray-500">Profile names cannot be changed after creation.</p>}
-              </div>
-              {!isCreating && original && (
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => void duplicateProfile()} disabled={isSaving || isLoading} className="cursor-pointer rounded border border-[#486d9a] bg-[#385d8a]/30 px-3 py-1.5 text-blue-200 hover:bg-[#385d8a]/60 disabled:opacity-50">Duplicate</button>
-                  <button type="button" onClick={() => void deleteProfile()} disabled={isSaving} className="cursor-pointer rounded border border-red-900 bg-red-950/30 px-3 py-1.5 text-red-300 hover:bg-red-950/60 disabled:opacity-50">Delete</button>
-                </div>
-              )}
-            </div>
+          <DesktopPanel className="profile-editor">
+            <PanelHeader actions={!isCreating && original ? (
+              <>
+                <CompactButton type="button" onClick={() => void duplicateProfile()} disabled={isSaving || isLoading} variant="secondary">Duplicate</CompactButton>
+                <CompactButton type="button" onClick={() => void deleteProfile()} disabled={isSaving} variant="danger">Delete</CompactButton>
+              </>
+            ) : undefined}>
+              {isCreating ? "Create profile" : original ? original.name : "Select a profile"}
+            </PanelHeader>
+
+            <CompactScrollbar className="profile-editor-scroll">
+              {original && <p className="profile-editor-note">Profile names cannot be changed after creation.</p>}
 
             {(isCreating || original) ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="sm:col-span-2">
-                  <span className="mb-1 block text-gray-400">Name</span>
-                  <input
+              <CompactFormGrid>
+                <CompactFormRow label="Name" htmlFor="profile-name">
+                  <CompactInput
+                    id="profile-name"
                     value={form.name}
                     onChange={event => setField("name", event.target.value)}
                     readOnly={!isCreating}
                     placeholder="profile-name"
-                    className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 text-white outline-none transition focus:border-violet-400 read-only:cursor-not-allowed read-only:text-gray-500"
                   />
-                </label>
+                </CompactFormRow>
                 {editableFields.map(field => (
-                  <label key={field.property} className={field.property === "public_key" ? "sm:col-span-2" : ""}>
-                    <span className="mb-1 block text-gray-400">{field.label}</span>
-                    <input
+                  <CompactFormRow key={field.property} label={field.label} htmlFor={`profile-${field.property}`}>
+                    <CompactInput
+                      id={`profile-${field.property}`}
                       value={form[field.property]}
                       onChange={event => setField(field.property, event.target.value)}
                       placeholder={field.placeholder}
                       list={field.property === "os" ? "profile-os-options" : field.property === "arch" ? "profile-arch-options" : undefined}
-                      className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 font-mono text-white outline-none transition focus:border-violet-400"
                     />
                     {field.property === "os" && (
                       <datalist id="profile-os-options">
@@ -439,41 +443,42 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                         {form.arch_options.map(option => <option key={option} value={option} />)}
                       </datalist>
                     )}
-                  </label>
+                  </CompactFormRow>
                 ))}
 
-                <section className="space-y-3 rounded border border-[#3A3B3E] bg-[#1C1D1F] p-3 sm:col-span-2">
-                  <div>
-                    <h4 className="font-bold text-gray-200">Protocol definition</h4>
-                    <p className="mt-0.5 text-[10px] text-gray-500">Protocol-specific values stay separate from the generic builder profile.</p>
-                  </div>
-
-                  <label className="block">
-                    <span className="mb-1 block text-gray-400">Protocol</span>
-                    <input
+                <fieldset className="desktop-fieldset profile-protocol-fields">
+                  <legend>Protocol definition</legend>
+                  <CompactFormGrid>
+                  <CompactFormRow label="Protocol" htmlFor="profile-protocol">
+                    <CompactInput
+                      id="profile-protocol"
                       value={form.protocol}
                       onChange={event => setForm(current => ({ ...current, protocol: event.target.value }))}
                       placeholder="http"
-                      className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 font-mono text-white outline-none transition focus:border-violet-400"
                     />
-                  </label>
+                  </CompactFormRow>
 
-                  <label className="block">
-                    <span className="mb-1 block text-gray-400">Options (JSON)</span>
-                    <textarea
+                  <CompactFormRow
+                    label="Options (JSON)"
+                    htmlFor="profile-options"
+                    hint="Includes paths, headers, and protocol-specific values."
+                  >
+                    <CompactTextArea
+                      id="profile-options"
                       value={optionsText}
                       onChange={event => setOptionsText(event.target.value)}
                       rows={10}
                       spellCheck={false}
-                      className="w-full resize-y rounded border border-[#444] bg-[#111214] px-3 py-2 font-mono text-[11px] leading-5 text-gray-200 outline-none transition focus:border-violet-400"
                     />
-                    <span className="mt-1 block text-[10px] text-gray-500">All options are editable here, including path, headers, and protocol-specific values.</span>
-                  </label>
+                  </CompactFormRow>
 
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <label>
-                      <span className="mb-1 block text-gray-400">New one-time secret</span>
-                      <input
+                  <CompactFormRow
+                    label="New one-time secret"
+                    htmlFor="profile-ots"
+                    hint="Existing secret values are never returned by the TeamServer."
+                  >
+                      <CompactInput
+                        id="profile-ots"
                         type="password"
                         value={otsDraft}
                         onChange={event => {
@@ -482,72 +487,69 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                         }}
                         autoComplete="new-password"
                         placeholder={form.ots_configured ? "Leave blank to keep current OTS" : "Optional"}
-                        className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 font-mono text-white outline-none transition focus:border-violet-400"
                       />
-                      <span className="mt-1 block text-[10px] text-gray-500">Existing secret values are never returned by the TeamServer.</span>
-                    </label>
+                  </CompactFormRow>
 
-                    <label>
-                      <span className="mb-1 block text-gray-400">OTS expires at (UTC)</span>
-                      <input
+                  <CompactFormRow label="OTS expires at (UTC)" htmlFor="profile-ots-expires" hint="Clear the value to remove expiration.">
+                      <CompactInput
+                        id="profile-ots-expires"
                         type="datetime-local"
                         value={otsExpiresAt}
                         onChange={event => setOTSExpiresAt(event.target.value)}
-                        className="w-full rounded border border-[#444] bg-[#17181A] px-3 py-2 font-mono text-white outline-none transition focus:border-violet-400"
                       />
-                      <span className="mt-1 block text-[10px] text-gray-500">Clear the value to remove the expiration.</span>
-                    </label>
-                  </div>
+                  </CompactFormRow>
 
                   {!isCreating && form.ots_configured && (
-                    <label className="flex cursor-pointer items-center gap-2 rounded border border-red-950/70 bg-red-950/20 px-3 py-2 text-red-300">
-                      <input
+                    <CompactFormRow label="One-time secret">
+                    <label className="compact-check-label danger-check-label">
+                      <CompactCheckbox
                         type="checkbox"
                         checked={clearOTS}
                         onChange={event => {
                           setClearOTS(event.target.checked);
                           if (event.target.checked) setOTSDraft("");
                         }}
-                        className="accent-violet-500"
                       />
                       Clear the currently configured OTS when saving
                     </label>
+                    </CompactFormRow>
                   )}
 
                   {!isCreating && (
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded border border-[#333] bg-[#17181A] p-3 text-[10px] sm:grid-cols-3">
-                      <div><dt className="text-gray-500">OTS configured</dt><dd className="mt-0.5 text-gray-200">{form.ots_configured ? "Yes" : "No"}</dd></div>
-                      <div><dt className="text-gray-500">OTS used at</dt><dd className="mt-0.5 text-gray-200">{formatTimestamp(form.ots_used_at)}</dd></div>
-                      <div><dt className="text-gray-500">Config version</dt><dd className="mt-0.5 text-gray-200">{form.config_version || "—"}</dd></div>
-                      <div><dt className="text-gray-500">Created</dt><dd className="mt-0.5 text-gray-200">{formatTimestamp(form.definition_created_at)}</dd></div>
-                      <div><dt className="text-gray-500">Updated</dt><dd className="mt-0.5 text-gray-200">{formatTimestamp(form.definition_updated_at)}</dd></div>
+                    <dl className="profile-metadata-grid">
+                      <div><dt>OTS configured</dt><dd>{form.ots_configured ? "Yes" : "No"}</dd></div>
+                      <div><dt>OTS used at</dt><dd>{formatTimestamp(form.ots_used_at)}</dd></div>
+                      <div><dt>Config version</dt><dd>{form.config_version || "—"}</dd></div>
+                      <div><dt>Created</dt><dd>{formatTimestamp(form.definition_created_at)}</dd></div>
+                      <div><dt>Updated</dt><dd>{formatTimestamp(form.definition_updated_at)}</dd></div>
                     </dl>
                   )}
-                </section>
-              </div>
+                  </CompactFormGrid>
+                </fieldset>
+              </CompactFormGrid>
             ) : (
-              <div className="flex min-h-56 items-center justify-center rounded border border-dashed border-[#3A3B3E] text-gray-600">Select an existing profile or create a new one.</div>
+              <div className="empty-desktop-panel">Select an existing profile or create a new one.</div>
             )}
 
-            {error && <p className="mt-3 rounded border border-red-900/70 bg-red-950/30 p-2 text-red-300">{error}</p>}
-            {notice && <p className="mt-3 rounded border border-emerald-900/70 bg-emerald-950/20 p-2 text-emerald-300">{notice}</p>}
+            {error && <p role="alert" className="desktop-alert desktop-alert--error">{error}</p>}
+            {notice && <p className="desktop-alert desktop-alert--success">{notice}</p>}
 
             {(isCreating || original) && (
-              <div className="mt-4 flex justify-end gap-2 border-t border-[#333] pt-3">
-                {isCreating && <button type="button" onClick={() => void refresh()} disabled={isSaving} className="cursor-pointer rounded border border-[#444] px-3 py-2 text-gray-300 hover:bg-[#333] disabled:opacity-50">Cancel</button>}
-                <button
+              <div className="profile-editor-actions">
+                {isCreating && <CompactButton type="button" onClick={() => void refresh()} disabled={isSaving}>Cancel</CompactButton>}
+                <CompactButton
                   type="button"
                   onClick={() => void (isCreating ? createProfile() : updateProfile())}
                   disabled={isSaving || isLoading}
-                  className="cursor-pointer rounded bg-[#385d8a] px-4 py-2 font-bold text-white hover:bg-[#486d9a] disabled:cursor-not-allowed disabled:opacity-50"
+                  variant="primary"
                 >
                   {isSaving ? "Saving…" : isCreating ? "Create Profile" : "Save Changes"}
-                </button>
+                </CompactButton>
               </div>
             )}
-          </main>
+            </CompactScrollbar>
+          </DesktopPanel>
         </div>
-      </div>
-    </div>
+    </DesktopModal>
   );
 };

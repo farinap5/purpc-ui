@@ -1,5 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { TeamUser, TeamUserCredentials } from "../api/teamApi";
+import {
+  CompactButton,
+  CompactFormGrid,
+  CompactFormRow,
+  CompactInput,
+  CompactScrollbar,
+  DataGrid,
+  DesktopPanel,
+  PanelHeader,
+  StatusBar
+} from "./desktop";
 
 interface UserManagerProps {
   users: TeamUser[];
@@ -148,68 +159,61 @@ export const UserManager: React.FC<UserManagerProps> = ({
   const connectedUsers = users.filter(user => user.connected).length;
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-auto bg-[#1e1e1e] p-3 font-sans text-gray-300">
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-[#333] pb-3">
-        <div>
-          <h2 className="text-sm font-bold text-gray-100">TeamServer Users</h2>
-          <p className="mt-1 text-[10px] text-gray-500">
-            Connected means the user has one or more active WebSocket connections.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="rounded border border-[#414141] bg-[#292929] px-2 py-1 text-[10px] text-gray-400">
+    <DesktopPanel className="user-manager">
+      <PanelHeader actions={
+        <>
+          <span className="panel-counter">
             {users.length} {users.length === 1 ? "user" : "users"} · {connectedUsers} connected
           </span>
-          <button
+          <CompactButton
             type="button"
             disabled={!isConnected || isBusy}
             onClick={() => void refreshUsers()}
-            className="rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-violet-500 hover:bg-[#333] focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
           >
             {pendingAction === "list" ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
-      </div>
+          </CompactButton>
+        </>
+      }>TeamServer Users</PanelHeader>
 
-      <div className="mb-3 rounded border border-violet-900/70 bg-violet-950/20 p-2 text-[10px] text-violet-200/80">
+      <div className="desktop-alert desktop-alert--accent user-manager-notice">
         User tokens can authenticate WebSocket and HTTP endpoints. Creating, refreshing, or deleting users requires the startup admin token.
       </div>
 
       {issuedCredential && (
-        <section className="mb-3 rounded border border-violet-700/70 bg-violet-950/25 p-3">
-          <div className="flex items-start justify-between gap-4">
+        <section className="issued-credential-panel">
+          <div className="issued-credential-header">
             <div>
-              <h3 className="text-xs font-bold text-violet-100">
+              <strong>
                 Token {issuedCredential.action} for {issuedCredential.user.name}
-              </h3>
-              <p className="mt-1 text-[10px] text-violet-300/75">
+              </strong>
+              <p>
                 Copy this token now. It will not be returned by user listings or events.
                 {issuedCredential.action === "refreshed" && " The previous token and its active WebSocket connections were revoked immediately."}
               </p>
             </div>
-            <button
+            <CompactButton
               type="button"
               onClick={dismissCredential}
-              className="rounded px-1.5 py-0.5 text-[10px] text-gray-500 hover:bg-[#333] hover:text-gray-200 focus:outline-none focus:ring-1 focus:ring-violet-500"
+              variant="ghost"
             >
               Dismiss
-            </button>
+            </CompactButton>
           </div>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <input
+          <div className="issued-token-row">
+            <CompactInput
               aria-label={`Authentication token for ${issuedCredential.user.name}`}
               readOnly
               value={issuedCredential.token}
               onFocus={event => event.currentTarget.select()}
-              className="min-w-0 flex-1 select-text rounded border border-[#555] bg-[#111] px-3 py-2 font-mono text-xs text-gray-100 outline-none focus:border-violet-400"
+              className="select-text"
             />
-            <button
+            <CompactButton
               type="button"
               onClick={() => void handleCopyToken()}
-              className="rounded border border-violet-700 bg-violet-900/40 px-3 py-2 text-xs font-bold text-violet-100 transition hover:bg-violet-800/50 focus:outline-none focus:ring-1 focus:ring-violet-400"
+              variant="secondary"
             >
               {copyState === "copied" ? "Copied" : "Copy token"}
-            </button>
+            </CompactButton>
           </div>
           {copyState === "failed" && (
             <p className="mt-2 text-[10px] text-red-300">Clipboard access failed. Select and copy the token manually.</p>
@@ -218,68 +222,62 @@ export const UserManager: React.FC<UserManagerProps> = ({
       )}
 
       {actionError && (
-        <p className="mb-3 rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{actionError}</p>
+        <p role="alert" className="desktop-alert desktop-alert--error user-action-error">{actionError}</p>
       )}
 
-      <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <section className="min-h-48 overflow-auto rounded border border-[#333] bg-[#222]">
-          <table className="w-full min-w-[1050px] text-left text-xs">
-            <thead className="sticky top-0 z-10 border-b border-[#3a3a3a] bg-[#292a2d] text-[10px] uppercase tracking-wide text-gray-500">
+      <div className="user-manager-split">
+        <CompactScrollbar className="user-grid-scroll">
+          <DataGrid aria-label="TeamServer users" className="user-grid">
+            <colgroup>
+              <col style={{ width: 150 }} /><col style={{ width: 270 }} /><col style={{ width: 80 }} />
+              <col style={{ width: 120 }} /><col style={{ width: 170 }} /><col style={{ width: 170 }} /><col style={{ width: 220 }} />
+            </colgroup>
+            <thead>
               <tr>
-                <th className="px-3 py-2">Username</th>
-                <th className="px-3 py-2">UUID</th>
-                <th className="px-3 py-2">Role</th>
-                <th className="px-3 py-2">Connection</th>
-                <th className="px-3 py-2">Created</th>
-                <th className="px-3 py-2">Last seen</th>
-                <th className="px-3 py-2 text-right">Actions</th>
+                <th>Username</th><th>UUID</th><th>Role</th><th>Connection</th><th>Created</th><th>Last seen</th><th className="text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#303030]">
+            <tbody>
               {users.map(user => (
-                <tr key={user.uuid} className="hover:bg-[#292929]">
-                  <td className="px-3 py-2 font-mono font-bold text-gray-100">{user.name}</td>
-                  <td className="select-all px-3 py-2 font-mono text-[10px] text-gray-500">{user.uuid}</td>
-                  <td className="px-3 py-2">
-                    <span className={`rounded border px-1.5 py-0.5 text-[9px] uppercase ${
-                      user.admin
-                        ? "border-violet-700/70 bg-violet-950/30 text-violet-200"
-                        : "border-[#444] bg-[#292929] text-gray-400"
-                    }`}>
+                <tr key={user.uuid}>
+                  <td className="text-gray-100">{user.name}</td>
+                  <td className="select-all text-[10px] text-gray-500">{user.uuid}</td>
+                  <td>
+                    <span className={user.admin ? "user-role is-admin" : "user-role"}>
                       {user.admin ? "Admin" : "User"}
                     </span>
                   </td>
-                  <td className="px-3 py-2">
-                    <span className={user.connected ? "text-emerald-300" : "text-gray-500"}>
-                      <span className={`mr-1.5 inline-block h-1.5 w-1.5 rounded-full ${user.connected ? "bg-emerald-400" : "bg-gray-600"}`} />
+                  <td>
+                    <span className={user.connected ? "user-connection is-connected" : "user-connection"}>
+                      <span />
                       {user.connected ? "Connected" : "Offline"}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-500">{formatTimestamp(user.created)}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-gray-500">{formatTimestamp(user.last_seen)}</td>
-                  <td className="px-3 py-2 text-right">
+                  <td>{formatTimestamp(user.created)}</td>
+                  <td>{formatTimestamp(user.last_seen)}</td>
+                  <td className="text-right">
                     {user.admin ? (
                       <span className="text-[10px] text-gray-600">Startup credential protected</span>
                     ) : (
-                      <div className="flex justify-end gap-1.5">
-                        <button
+                      <div className="grid-actions">
+                        <CompactButton
                           type="button"
                           disabled={!isConnected || isBusy}
                           onClick={() => void handleRefreshToken(user)}
                           title="Generate a new token and revoke this user's active connections"
-                          className="rounded border border-violet-800/70 bg-violet-950/30 px-2 py-1 text-[10px] text-violet-200 transition hover:border-violet-500 hover:bg-violet-950/60 focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                          variant="secondary"
                         >
                           {pendingAction === `refresh:${user.uuid}` ? "Refreshing…" : "Refresh token"}
-                        </button>
-                        <button
+                        </CompactButton>
+                        <CompactButton
                           type="button"
                           disabled={!isConnected || isBusy}
                           onClick={() => void handleDeleteUser(user)}
                           title="Delete this user and revoke all active connections"
-                          className="rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-violet-400 focus:outline-none disabled:cursor-not-allowed disabled:opacity-40"
+                          variant="danger"
                         >
                           {pendingAction === `delete:${user.uuid}` ? "Deleting…" : "Delete"}
-                        </button>
+                        </CompactButton>
                       </div>
                     )}
                   </td>
@@ -287,20 +285,21 @@ export const UserManager: React.FC<UserManagerProps> = ({
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-10 text-center text-gray-600">
+                  <td colSpan={7} className="empty-grid-cell">
                     {isConnected ? "No users returned by the TeamServer." : "Connect to the TeamServer to list users."}
                   </td>
                 </tr>
               )}
             </tbody>
-          </table>
-        </section>
+          </DataGrid>
+        </CompactScrollbar>
 
-        <section className="self-start rounded border border-[#333] bg-[#222] p-3">
-          <h3 className="border-b border-[#333] pb-2 text-xs font-bold text-gray-100">Add new user</h3>
-          <form onSubmit={handleCreateUser} className="mt-3">
-            <label htmlFor="new-teamserver-username" className="mb-1 block text-[11px] text-gray-300">Username</label>
-            <input
+        <DesktopPanel className="add-user-panel">
+          <PanelHeader>Add new user</PanelHeader>
+          <form onSubmit={handleCreateUser} className="add-user-form">
+            <CompactFormGrid>
+            <CompactFormRow label="Username" htmlFor="new-teamserver-username" hint="The token is shown once after creation." className="user-form-row">
+            <CompactInput
               id="new-teamserver-username"
               type="text"
               maxLength={64}
@@ -311,21 +310,20 @@ export const UserManager: React.FC<UserManagerProps> = ({
                 setActionError("");
               }}
               placeholder="operator name"
-              className="w-full rounded border border-[#444] bg-[#151515] px-3 py-2 text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400"
             />
-            <p className="mt-1 text-[10px] text-gray-600">
-              The TeamServer securely generates the token. The token is displayed only after creation.
-            </p>
-            <button
+            </CompactFormRow>
+            </CompactFormGrid>
+            <CompactButton
               type="submit"
               disabled={!isConnected || isBusy || !username.trim()}
-              className="mt-3 w-full rounded bg-violet-700 px-3 py-2 text-xs font-bold text-white transition hover:bg-violet-600 focus:outline-none focus:ring-1 focus:ring-violet-400 disabled:cursor-not-allowed disabled:opacity-40"
+              variant="primary"
             >
               {pendingAction === "create" ? "Creating…" : "Create user"}
-            </button>
+            </CompactButton>
           </form>
-        </section>
+        </DesktopPanel>
       </div>
-    </div>
+      <StatusBar>Connected means the user has one or more active WebSocket connections.</StatusBar>
+    </DesktopPanel>
   );
 };

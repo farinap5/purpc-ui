@@ -1,9 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
   X, 
-  Radio, 
   Key, 
-  FileCode, 
   Plus, 
   Download, 
   RefreshCw,
@@ -14,6 +12,21 @@ import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTa
 import { TeamUser, TeamUserCredentials, TeamUserMessage } from "../api/teamApi";
 import { createLootContentPreview, imageMimeType, LootContentPreview } from "../utils/loot";
 import { UserManager } from "./UserManager";
+import {
+  CompactButton,
+  CompactCheckbox,
+  CompactFormGrid,
+  CompactFormRow,
+  CompactIconButton,
+  CompactInput,
+  CompactNumberInput,
+  CompactScrollbar,
+  DataGrid,
+  DesktopPanel,
+  LogConsole,
+  PanelHeader,
+  TabStrip
+} from "./desktop";
 
 interface CommandExecutionResult {
   task_ids?: string[];
@@ -455,69 +468,52 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   // 1. Team event log
   const renderEventLog = () => {
     return (
-      <div className="flex flex-col h-full bg-[#000000] text-[#00FF00] font-mono p-3 overflow-auto text-sm leading-relaxed">
-        <div ref={consoleScrollRef} onScroll={handleConsoleScroll} className="flex-1 space-y-1 overflow-y-auto">
+      <LogConsole ref={consoleScrollRef} onScroll={handleConsoleScroll} className="event-log-console">
           {eventLogs.map((log) => {
-            let textColor = "text-[#00FF00]";
-            if (log.type === "input") textColor = "text-[#FFFF00]";
-            if (log.type === "error") textColor = "text-[#FF5555]";
-            
             return (
-              <div key={log.id} className="flex items-start space-x-2">
-                <span className="text-[#00FF00] flex-shrink-0 select-none">{log.timestamp}</span>
-                <span className={`${textColor} whitespace-pre-wrap font-mono`}>{log.message}</span>
+              <div key={log.id} className={`log-row log-row--${log.type}`}>
+                <span className="log-timestamp">{log.timestamp}</span>
+                <span className="log-message">{log.message}</span>
               </div>
             );
           })}
-        </div>
-      </div>
+      </LogConsole>
     );
   };
 
   const renderSessions = () => {
     return (
-      <div className="h-full overflow-auto bg-[#1e1e1e] p-3 text-xs text-gray-300">
-        <div className="mb-2 flex items-center justify-between border-b border-[#333] pb-2">
-          <h3 className="font-bold uppercase text-gray-200">Active Sessions</h3>
-          <span className="text-[10px] text-gray-500">{sessions.length} total</span>
-        </div>
-        <div className="overflow-auto rounded border border-[#333]">
-          <table className="w-full min-w-[700px] table-fixed text-left">
-            <thead className="bg-[#292a2d] text-[10px] uppercase text-gray-500">
+      <DesktopPanel className="console-data-panel">
+        <PanelHeader actions={<span className="panel-counter">{sessions.length} total</span>}>Active Sessions</PanelHeader>
+        <CompactScrollbar className="console-grid-scroll">
+          <DataGrid aria-label="Active sessions" className="console-session-grid">
+            <thead>
               <tr>
-                <th className="px-2 py-1.5">Name</th>
-                <th className="px-2 py-1.5">User</th>
-                <th className="px-2 py-1.5">Computer</th>
-                <th className="px-2 py-1.5">Payload</th>
-                <th className="px-2 py-1.5">Process</th>
-                <th className="px-2 py-1.5">Status</th>
+                <th>Name</th><th>User</th><th>Computer</th><th>Payload</th><th>Process</th><th>Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#2c2d30] bg-[#222326]">
+            <tbody>
               {sessions.map(session => (
-                <tr key={session.id} className="hover:bg-[#2d2e31]">
-                  <td className="truncate px-2 py-1.5 font-mono text-gray-200">{session.id}</td>
-                  <td className="truncate px-2 py-1.5">{session.user}</td>
-                  <td className="truncate px-2 py-1.5">{session.computer}</td>
-                  <td className="truncate px-2 py-1.5">{session.listener}</td>
-                  <td className="truncate px-2 py-1.5">{session.process} ({session.pid})</td>
-                  <td className={`px-2 py-1.5 font-bold ${
-                    session.status === "active" ? "text-emerald-400" : session.status === "killed" ? "text-red-400" : "text-amber-400"
+                <tr key={session.id}>
+                  <td>{session.id}</td><td>{session.user}</td><td>{session.computer}</td><td>{session.listener}</td>
+                  <td>{session.process} ({session.pid})</td>
+                  <td className={`session-status ${
+                    session.status === "active" ? "is-active" : session.status === "killed" ? "is-killed" : "is-lost"
                   }`}>{session.status}</td>
                 </tr>
               ))}
               {sessions.length === 0 && (
-                <tr><td colSpan={6} className="px-3 py-8 text-center text-gray-600">No sessions are registered.</td></tr>
+                <tr><td colSpan={6} className="empty-grid-cell">No sessions are registered.</td></tr>
               )}
             </tbody>
-          </table>
-        </div>
-      </div>
+          </DataGrid>
+        </CompactScrollbar>
+      </DesktopPanel>
     );
   };
 
   const renderUnavailablePanel = () => (
-    <div className="flex h-full items-center justify-center bg-[#1e1e1e] text-sm text-gray-500">
+    <div className="empty-desktop-panel h-full">
       This panel is unavailable.
     </div>
   );
@@ -527,7 +523,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     const session = sessions.find(b => b.id === sessionId);
     if (!session) {
       return (
-        <div className="flex items-center justify-center h-full bg-[#000000] text-gray-500 font-mono">
+        <div className="empty-desktop-panel h-full">
           Session inactive.
         </div>
       );
@@ -539,15 +535,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       .sort((left, right) => left.name.localeCompare(right.name));
 
     return (
-      <div className="flex flex-col md:flex-row h-full bg-[#000000] divide-y md:divide-y-0 md:divide-x divide-[#222222]">
-        <div className="flex-1 flex flex-col h-full p-2 overflow-hidden text-xs select-text">
-          <div className="flex items-center justify-between text-gray-400 border-b border-[#222222] pb-1.5 mb-2 font-mono">
-            <div className="flex items-center space-x-2">
-              <span className="text-gray-200 font-bold">{session.user}@{session.computer}</span>
-              <span className="text-gray-600">|</span>
-              <span>PID: {session.pid} ({session.process})</span>
-            </div>
-            <button 
+      <div className="terminal-split">
+        <DesktopPanel className="terminal-console-pane">
+          <PanelHeader actions={
+            <CompactButton
               onClick={() => {
                 onAddLog({
                   id: `log-${Date.now()}`,
@@ -557,26 +548,26 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                   sessionId
                 });
               }}
-              className="text-[10px] text-gray-500 hover:text-white cursor-pointer"
+              variant="ghost"
             >
               Clear
-            </button>
-          </div>
+            </CompactButton>
+          }>{session.user}@{session.computer} · PID {session.pid} ({session.process})</PanelHeader>
 
-          <div ref={consoleScrollRef} onScroll={handleConsoleScroll} className="flex-1 overflow-y-auto space-y-1.5 font-mono text-sm">
-            <div className="text-[#00FF00] text-xs p-1 bg-[#111111] border border-[#222222] rounded mb-2">
+          <LogConsole ref={consoleScrollRef} onScroll={handleConsoleScroll} className="terminal-log">
+            <div className="terminal-active-message">
               *** Session active callback for {session.user}@{session.computer} ({session.pid})
             </div>
 
             {filteredLogs.map((log) => {
-              let textClass = "text-gray-300";
-              if (log.type === "input") textClass = "text-[#FFFF00] font-bold";
-              if (log.type === "error") textClass = "text-red-400";
-              if (log.type === "output") textClass = "text-[#00FF00]";
+              let textClass = "terminal-message";
+              if (log.type === "input") textClass += " is-input";
+              if (log.type === "error") textClass += " is-error";
+              if (log.type === "output") textClass += " is-output";
 
               if (log.type === "input") {
                 return (
-                  <div key={log.id} className={`${textClass} whitespace-pre-wrap break-words`}>
+                  <div key={log.id} className={textClass}>
                     {log.message}
                   </div>
                 );
@@ -585,47 +576,44 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
               const [summary, ...detailLines] = log.message.split("\n");
               
               return (
-                <div key={log.id} className="font-mono">
-                  <div className="flex items-start gap-1.5">
-                    <span className="shrink-0 text-gray-500 text-[11px] select-text">[{log.timestamp}]</span>
-                    <span className={`${textClass} whitespace-pre-wrap break-words min-w-0`}>{summary}</span>
+                <div key={log.id}>
+                  <div className="terminal-log-line">
+                    <span className="terminal-timestamp">[{log.timestamp}]</span>
+                    <span className={textClass}>{summary}</span>
                   </div>
                   {detailLines.length > 0 && (
-                    <div className={`${textClass} whitespace-pre-wrap break-words`}>{detailLines.join("\n")}</div>
+                    <div className={textClass}>{detailLines.join("\n")}</div>
                   )}
                 </div>
               );
             })}
-          </div>
-        </div>
+          </LogConsole>
+        </DesktopPanel>
 
-        {/* Commands registered by loaded TeamServer Lua scripts */}
-        <div className="w-full md:w-72 bg-[#0a0a0a] p-2 flex flex-col text-[11px] font-mono h-40 md:h-full overflow-hidden">
-          <div className="text-gray-400 border-b border-[#222222] pb-1.5 mb-2">
-            <span className="font-bold text-gray-300">Available Commands</span>
-            <div className="mt-0.5 text-[9px] text-gray-600">Payload type: {session.listener}</div>
-          </div>
+        <DesktopPanel className="terminal-command-pane">
+          <PanelHeader actions={<span className="panel-counter">{session.listener}</span>}>Available Commands</PanelHeader>
 
-          <div className="flex-1 overflow-y-auto space-y-1 pr-1 text-gray-400">
+          <CompactScrollbar className="available-command-list">
             {availableCommands.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-center text-gray-600 p-2">
+              <div className="empty-command-list">
                 No Lua commands registered for this payload type.
               </div>
             ) : (
               availableCommands.map(command => (
-                <button
+                <CompactButton
                   key={`${command.payloadType}-${command.name}`}
                   type="button"
                   onClick={() => setCommandInput(`${command.name} `)}
-                  className="block w-full cursor-pointer rounded border border-[#222222] bg-[#141414] p-1.5 text-left hover:bg-[#202020]"
+                  className="available-command-row"
+                  title={command.description}
                 >
-                  <div className="font-bold text-gray-200">{command.name}</div>
-                  <div className="mt-0.5 text-[9px] leading-tight text-gray-500">{command.description}</div>
-                </button>
+                  <strong>{command.name}</strong>
+                  <span>{command.description}</span>
+                </CompactButton>
               ))
             )}
-          </div>
-        </div>
+          </CompactScrollbar>
+        </DesktopPanel>
       </div>
     );
   };
@@ -633,123 +621,106 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   // 3. Listeners Management
   const renderListeners = () => {
     return (
-      <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-auto flex flex-col md:flex-row gap-4 font-sans">
-        <div className="flex-1 flex flex-col min-w-0">
-          <h3 className="text-xs font-bold text-gray-200 mb-2 uppercase tracking-wide flex items-center">
-            <Radio className="w-3.5 h-3.5 mr-1 text-gray-400" />
-            <span>TeamServer Listeners</span>
-          </h3>
-
-          <div className="border border-[#333333] rounded overflow-hidden">
-            <table className="w-full text-xs text-left text-gray-300">
-              <thead className="bg-[#2a2a2a] text-gray-400 border-b border-[#333333]">
+      <div className="listener-split">
+        <DesktopPanel className="listener-grid-panel">
+          <PanelHeader>TeamServer Listeners</PanelHeader>
+          <CompactScrollbar className="console-grid-scroll">
+            <DataGrid aria-label="TeamServer listeners" className="listener-grid">
+              <thead>
                 <tr>
-                  <th className="p-2">Name</th>
-                  <th className="p-2">Host Bind</th>
-                  <th className="p-2">Port</th>
-                  <th className="p-2">Persistent</th>
-                  <th className="p-2">Sessions</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2 text-right">Actions</th>
+                  <th>Name</th><th>Host Bind</th><th>Port</th><th>Persistent</th><th>Sessions</th><th>Status</th><th className="text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#2a2a2a] bg-[#222222]">
+              <tbody>
                 {listeners.map(l => (
-                  <tr key={l.id} className="hover:bg-[#282828]">
-                    <td className="p-2 font-bold text-white">{l.name}</td>
-                    <td className="p-2 font-mono text-gray-400">{l.host}</td>
-                    <td className="p-2 font-mono font-bold text-white">{l.port}</td>
-                    <td className="p-2 text-gray-400">{l.persistent ? "Yes" : "No"}</td>
-                    <td className="p-2 text-gray-400">{l.associations ?? 0}</td>
-                    <td className="p-2">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-[#333] text-gray-200">
-                        {l.status}
-                      </span>
+                  <tr key={l.id}>
+                    <td className="text-white">{l.name}</td><td>{l.host}</td><td>{l.port}</td>
+                    <td>{l.persistent ? "Yes" : "No"}</td><td>{l.associations ?? 0}</td>
+                    <td><span className={l.status === "Active" ? "listener-status is-active" : "listener-status"}>{l.status}</span>
                     </td>
-                    <td className="p-2 text-right">
-                      <button
+                    <td className="text-right">
+                      <CompactButton
                         onClick={() => {
                           setListenerActionError("");
                           void onSetListenerState(l.name, l.status !== "Active")
                             .catch(error => setListenerActionError(error instanceof Error ? error.message : String(error)));
                         }}
-                        className="text-[10px] bg-[#383838] hover:bg-[#484848] text-white px-2 py-0.5 rounded cursor-pointer"
+                        variant={l.status === "Active" ? "danger" : "secondary"}
                       >
                         {l.status === "Active" ? "Stop" : "Start"}
-                      </button>
+                      </CompactButton>
                     </td>
                   </tr>
                 ))}
+                {listeners.length === 0 && (
+                  <tr><td colSpan={7} className="empty-grid-cell">No listeners are registered.</td></tr>
+                )}
               </tbody>
-            </table>
-          </div>
-        </div>
+            </DataGrid>
+          </CompactScrollbar>
+        </DesktopPanel>
 
-        <div className="w-full md:w-72 bg-[#252525] border border-[#333333] p-3 rounded flex flex-col text-xs">
-          <h3 className="text-xs font-bold text-gray-200 mb-2 border-b border-[#333] pb-1 flex items-center">
-            <Plus className="w-3.5 h-3.5 mr-1 text-gray-400" />
-            <span>New Listener</span>
-          </h3>
+        <DesktopPanel className="listener-form-panel">
+          <PanelHeader>New Listener</PanelHeader>
 
-          <form onSubmit={handleCreateListener} className="space-y-2.5 flex-1">
-            <div>
-              <label className="block text-gray-400 mb-1">Listener Name</label>
-              <input
+          <form onSubmit={handleCreateListener} className="listener-form">
+            <CompactFormGrid>
+            <CompactFormRow label="Listener Name" htmlFor="listener-name" required className="listener-form-row">
+              <CompactInput
+                id="listener-name"
                 type="text"
                 required
                 placeholder="HTTPS_Secure"
                 value={newListenerName}
                 onChange={(e) => setNewListenerName(e.target.value)}
-                className="w-full bg-[#181818] border border-[#444] rounded p-1 text-white outline-none"
               />
-            </div>
+            </CompactFormRow>
 
-            <div>
-              <label className="block text-gray-400 mb-1">Host Bind</label>
-              <input
+            <CompactFormRow label="Host Bind" htmlFor="listener-host" required className="listener-form-row">
+              <CompactInput
+                id="listener-host"
                 type="text"
                 required
                 value={newListenerHost}
                 onChange={(e) => setNewListenerHost(e.target.value)}
-                className="w-full bg-[#181818] border border-[#444] rounded p-1 text-white outline-none font-mono"
               />
-            </div>
+            </CompactFormRow>
 
-            <div>
-              <label className="block text-gray-400 mb-1">Port</label>
-              <input
-                type="number"
+            <CompactFormRow label="Port" htmlFor="listener-port" required className="listener-form-row">
+              <CompactNumberInput
+                id="listener-port"
                 min="1"
                 max="65535"
                 required
                 value={newListenerPort}
                 onChange={(e) => setNewListenerPort(parseInt(e.target.value))}
-                className="w-full bg-[#181818] border border-[#444] rounded p-1 text-white outline-none"
               />
-            </div>
+            </CompactFormRow>
 
-            <label className="flex items-center gap-2 text-gray-400">
-              <input
-                type="checkbox"
+            <CompactFormRow label="Persistence" className="listener-form-row">
+            <label className="compact-check-label">
+              <CompactCheckbox
                 checked={newListenerPersistent}
                 onChange={(e) => setNewListenerPersistent(e.target.checked)}
               />
-              Persistent across TeamServer restarts
+              Across TeamServer restarts
             </label>
+            </CompactFormRow>
+            </CompactFormGrid>
 
             {listenerActionError && (
-              <p className="rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">{listenerActionError}</p>
+              <p role="alert" className="desktop-alert desktop-alert--error">{listenerActionError}</p>
             )}
 
-            <button
+            <CompactButton
               type="submit"
               disabled={isCreatingListener || !isWsConnected}
-              className="w-full bg-[#385d8a] hover:bg-[#486d9a] text-white font-bold py-1.5 rounded transition cursor-pointer mt-2 disabled:cursor-not-allowed disabled:opacity-50"
+              variant="primary"
             >
               {isCreatingListener ? "Creating…" : "Create Listener"}
-            </button>
+            </CompactButton>
           </form>
-        </div>
+        </DesktopPanel>
       </div>
     );
   };
@@ -781,127 +752,113 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   };
 
   const renderLootTable = (title: string, items: Loot[], icon: React.ReactNode) => (
-    <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-hidden flex flex-col font-sans">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
-          {icon}
-          <span>{title}</span>
-          <span className="ml-2 font-normal text-gray-500">({items.length})</span>
-        </h3>
-        <button
+    <DesktopPanel className="loot-table-panel">
+      <PanelHeader actions={
+        <CompactButton
           type="button"
           disabled={isRefreshingLoots || !isWsConnected}
           onClick={() => void refreshLoots()}
-          className="flex items-center gap-1.5 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RefreshCw className={`h-3 w-3 ${isRefreshingLoots ? "animate-spin" : ""}`} />
           {isRefreshingLoots ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
+        </CompactButton>
+      }><span className="panel-title-with-icon">{icon}{title} <small>({items.length})</small></span></PanelHeader>
 
       {lootActionError && (
-        <p className="mb-2 rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">
+        <p role="alert" className="desktop-alert desktop-alert--error panel-alert">
           {lootActionError}
         </p>
       )}
 
-      <div className="flex-1 overflow-auto rounded border border-[#333333] bg-[#222222]">
-        <table className="w-full min-w-[1100px] text-left text-xs text-gray-300 font-mono">
-          <thead className="sticky top-0 z-10 border-b border-[#333333] bg-[#2a2a2a] text-gray-400">
+      <CompactScrollbar className="console-grid-scroll">
+        <DataGrid aria-label={title} className="loot-grid">
+          <colgroup>
+            <col style={{ width: 250 }} /><col style={{ width: 150 }} /><col style={{ width: 170 }} />
+            <col style={{ width: 220 }} /><col style={{ width: 100 }} /><col style={{ width: 360 }} /><col style={{ width: 190 }} />
+          </colgroup>
+          <thead>
             <tr>
-              <th className="p-2">UUID</th>
-              <th className="p-2">Source Session</th>
-              <th className="p-2">Created</th>
-              <th className="p-2">File Name</th>
-              <th className="p-2 text-right">Size</th>
-              <th className="p-2">SHA-256</th>
-              <th className="p-2 text-right">Actions</th>
+              <th>UUID</th><th>Source Session</th><th>Created</th><th>File Name</th><th className="text-right">Size</th><th>SHA-256</th><th className="text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#2a2a2a]">
+          <tbody>
             {items.map(item => (
-              <tr key={item.id} className="hover:bg-[#282828]">
-                <td className="p-2 select-all text-gray-400">{item.id}</td>
-                <td className="p-2 select-all font-bold text-white">{item.sourceSession || "—"}</td>
-                <td className="p-2 whitespace-nowrap text-gray-500">{item.capturedAt}</td>
-                <td className="p-2 select-all break-all font-bold text-white">{item.data}</td>
-                <td className="p-2 whitespace-nowrap text-right text-gray-300">
+              <tr key={item.id}>
+                <td className="select-all">{item.id}</td>
+                <td className="select-all text-white">{item.sourceSession || "—"}</td>
+                <td>{item.capturedAt}</td>
+                <td className="select-all text-white">{item.data}</td>
+                <td className="text-right">
                   {item.size === undefined ? "—" : `${item.size.toLocaleString()} B`}
                 </td>
-                <td className="p-2 select-all break-all text-gray-400">{item.sha256 || "—"}</td>
-                <td className="p-2">
-                  <div className="flex justify-end gap-1.5 font-sans">
-                    <button
+                <td className="select-all">{item.sha256 || "—"}</td>
+                <td>
+                  <div className="grid-actions">
+                    <CompactButton
                       type="button"
                       disabled={Boolean(lootActionId) || !isWsConnected}
                       onClick={() => void runLootAction("download", item.id)}
-                      className="flex items-center gap-1 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      variant="secondary"
                     >
                       <Download className="h-3 w-3" />
                       {lootActionId === `download:${item.id}` ? "Downloading…" : "Download"}
-                    </button>
-                    <button
+                    </CompactButton>
+                    <CompactButton
                       type="button"
                       disabled={Boolean(lootActionId) || !isWsConnected}
                       onClick={() => void runLootAction("delete", item.id)}
-                      className="flex items-center gap-1 rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      variant="danger"
                     >
                       <Trash2 className="h-3 w-3" />
                       {lootActionId === `delete:${item.id}` ? "Deleting…" : "Delete"}
-                    </button>
+                    </CompactButton>
                   </div>
                 </td>
               </tr>
             ))}
             {items.length === 0 && (
               <tr>
-                <td colSpan={7} className="p-8 text-center font-sans text-gray-500">
+                <td colSpan={7} className="empty-grid-cell">
                   No loot has been collected.
                 </td>
               </tr>
             )}
           </tbody>
-        </table>
-      </div>
-    </div>
+        </DataGrid>
+      </CompactScrollbar>
+    </DesktopPanel>
   );
 
   // 4. Secrets
   const renderSecrets = () => {
     const secrets = loots.filter(item => item.type === "Secret" || item.type === "Credential" || item.type === "Token");
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-[#1e1e1e] p-3 font-sans text-gray-300">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
-            <Key className="mr-1 h-3.5 w-3.5 text-gray-400" />
-            <span>Secrets</span>
-            <span className="ml-2 font-normal text-gray-500">({secrets.length})</span>
-          </h3>
-          <button
+      <DesktopPanel className="loot-preview-panel">
+        <PanelHeader actions={
+          <CompactButton
             type="button"
             disabled={isRefreshingLoots || !isWsConnected}
             onClick={() => void refreshLoots()}
-            className="flex items-center gap-1.5 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={`h-3 w-3 ${isRefreshingLoots ? "animate-spin" : ""}`} />
             {isRefreshingLoots ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
+          </CompactButton>
+        }><span className="panel-title-with-icon"><Key />Secrets <small>({secrets.length})</small></span></PanelHeader>
 
         {lootActionError && (
-          <p className="mb-2 rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">
+          <p role="alert" className="desktop-alert desktop-alert--error panel-alert">
             {lootActionError}
           </p>
         )}
 
-        <div className="flex-1 overflow-auto rounded border border-[#333] bg-[#191919] p-3">
-          <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+        <CompactScrollbar className="loot-preview-scroll">
+          <div className="secret-preview-grid">
             {secrets.map(item => {
               const preview = secretPreviews[item.id];
               const previewError = secretPreviewErrors[item.id];
               return (
-                <article key={item.id} className="flex min-w-0 flex-col overflow-hidden rounded border border-[#383838] bg-[#252525]">
-                  <div className="flex min-w-0 items-start justify-between gap-3 border-b border-[#333] p-2.5">
+                <article key={item.id} className="secret-record">
+                  <div className="secret-record-header">
                     <div className="min-w-0">
                       <div className="select-text break-all font-mono text-xs font-bold text-white">{item.data}</div>
                       <div className="mt-1 text-[10px] text-gray-500">
@@ -910,10 +867,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                         {item.capturedAt}
                       </div>
                     </div>
-                    <span className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase ${
+                    <span className={`secret-preview-type ${
                       preview?.kind === "hex"
-                        ? "border-amber-800/70 bg-amber-950/30 text-amber-300"
-                        : "border-purple-800/70 bg-purple-950/30 text-purple-300"
+                        ? "is-hex"
+                        : previewError ? "is-error" : "is-text"
                     }`}>
                       {preview?.kind === "hex"
                         ? "Hexdump"
@@ -921,7 +878,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                     </span>
                   </div>
 
-                  <div className="h-60 overflow-auto bg-[#111] p-3 font-mono text-[10px] leading-4 text-gray-300">
+                  <div className="secret-record-content">
                     {preview ? (
                       <pre className="min-w-max select-text whitespace-pre">{preview.content || "(empty file)"}</pre>
                     ) : previewError ? (
@@ -938,7 +895,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                     )}
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#333] p-2.5">
+                  <div className="secret-record-footer">
                     <div className="min-w-0 text-[10px] text-gray-500">
                       {preview && (
                         <span>
@@ -949,25 +906,25 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                       <span className="mx-1.5 text-gray-700">•</span>
                       <span className="select-text font-mono" title={item.id}>{item.id}</span>
                     </div>
-                    <div className="flex shrink-0 gap-1.5">
-                      <button
+                    <div className="grid-actions">
+                      <CompactButton
                         type="button"
                         disabled={Boolean(lootActionId) || !isWsConnected}
                         onClick={() => void runLootAction("download", item.id)}
-                        className="flex items-center gap-1 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                        variant="secondary"
                       >
                         <Download className="h-3 w-3" />
                         {lootActionId === `download:${item.id}` ? "Downloading…" : "Download"}
-                      </button>
-                      <button
+                      </CompactButton>
+                      <CompactButton
                         type="button"
                         disabled={Boolean(lootActionId) || !isWsConnected}
                         onClick={() => void runLootAction("delete", item.id)}
-                        className="flex items-center gap-1 rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                        variant="danger"
                       >
                         <Trash2 className="h-3 w-3" />
                         {lootActionId === `delete:${item.id}` ? "Deleting…" : "Delete"}
-                      </button>
+                      </CompactButton>
                     </div>
                   </div>
                 </article>
@@ -980,8 +937,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
               No secrets have been collected.
             </div>
           )}
-        </div>
-      </div>
+        </CompactScrollbar>
+      </DesktopPanel>
     );
   };
 
@@ -996,35 +953,29 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const renderImages = () => {
     const images = loots.filter(item => item.type === "Image");
     return (
-      <div className="flex h-full flex-col overflow-hidden bg-[#1e1e1e] p-3 font-sans text-gray-300">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
-            <ImageIcon className="mr-1 h-3.5 w-3.5 text-gray-400" />
-            <span>Device Images</span>
-            <span className="ml-2 font-normal text-gray-500">({images.length})</span>
-          </h3>
-          <button
+      <DesktopPanel className="loot-preview-panel">
+        <PanelHeader actions={
+          <CompactButton
             type="button"
             disabled={isRefreshingLoots || !isWsConnected}
             onClick={() => void refreshLoots()}
-            className="flex items-center gap-1.5 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className={`h-3 w-3 ${isRefreshingLoots ? "animate-spin" : ""}`} />
             {isRefreshingLoots ? "Refreshing…" : "Refresh"}
-          </button>
-        </div>
+          </CompactButton>
+        }><span className="panel-title-with-icon"><ImageIcon />Device Images <small>({images.length})</small></span></PanelHeader>
 
         {lootActionError && (
-          <p className="mb-2 rounded border border-red-900/70 bg-red-950/30 p-1.5 text-[10px] text-red-300">
+          <p role="alert" className="desktop-alert desktop-alert--error panel-alert">
             {lootActionError}
           </p>
         )}
 
-        <div className="flex-1 overflow-auto rounded border border-[#333] bg-[#191919] p-3">
-          <div className="flex flex-wrap items-start gap-3">
+        <CompactScrollbar className="loot-preview-scroll">
+          <div className="image-preview-grid">
             {images.map(item => (
-              <article key={item.id} className="flex w-[418px] max-w-full min-w-0 flex-col overflow-hidden rounded border border-[#383838] bg-[#252525]">
-                <div className="flex h-48 items-center justify-center overflow-hidden border-b border-[#333] bg-[#111]">
+              <article key={item.id} className="image-record">
+                <div className="image-record-preview">
                   {imagePreviewUrls[item.id] ? (
                     <img
                       src={imagePreviewUrls[item.id]}
@@ -1051,7 +1002,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                   )}
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col p-2.5">
+                <div className="image-record-details">
                   <div className="select-text break-all font-mono text-xs font-bold text-white">{item.data}</div>
                   <dl className="mt-2 grid grid-cols-[70px_minmax(0,1fr)] gap-x-2 gap-y-1 text-[10px]">
                     <dt className="text-gray-600">Session</dt>
@@ -1064,25 +1015,25 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                     <dd className="select-text truncate font-mono text-gray-500" title={item.id}>{item.id}</dd>
                   </dl>
 
-                  <div className="mt-3 flex justify-end gap-1.5 border-t border-[#333] pt-2">
-                    <button
+                  <div className="grid-actions image-record-actions">
+                    <CompactButton
                       type="button"
                       disabled={Boolean(lootActionId) || !isWsConnected}
                       onClick={() => void runLootAction("download", item.id)}
-                      className="flex items-center gap-1 rounded border border-[#444] bg-[#292929] px-2 py-1 text-[10px] text-gray-200 transition hover:border-purple-500 hover:bg-[#333] focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      variant="secondary"
                     >
                       <Download className="h-3 w-3" />
                       {lootActionId === `download:${item.id}` ? "Downloading…" : "Download"}
-                    </button>
-                    <button
+                    </CompactButton>
+                    <CompactButton
                       type="button"
                       disabled={Boolean(lootActionId) || !isWsConnected}
                       onClick={() => void runLootAction("delete", item.id)}
-                      className="flex items-center gap-1 rounded border border-red-900/70 bg-red-950/30 px-2 py-1 text-[10px] text-red-300 transition hover:border-red-600 hover:bg-red-950/60 focus:border-purple-500 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                      variant="danger"
                     >
                       <Trash2 className="h-3 w-3" />
                       {lootActionId === `delete:${item.id}` ? "Deleting…" : "Delete"}
-                    </button>
+                    </CompactButton>
                   </div>
                 </div>
               </article>
@@ -1094,8 +1045,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
               No images have been collected.
             </div>
           )}
-        </div>
-      </div>
+        </CompactScrollbar>
+      </DesktopPanel>
     );
   };
 
@@ -1146,23 +1097,19 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     };
 
     return (
-      <div className="flex h-full flex-col gap-3 overflow-auto bg-[#1e1e1e] p-3 font-sans text-gray-300 md:flex-row">
-        <div className="flex w-full flex-col md:w-72">
-          <div className="mb-2 flex items-center justify-between border-b border-[#333] pb-2">
-            <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
-              <span>Loaded Scripts</span>
-            </h3>
-            <button
+      <div className="script-manager-split">
+        <DesktopPanel className="script-list-panel">
+          <PanelHeader actions={
+            <CompactButton
               type="button"
               onClick={() => void refreshScripts()}
               disabled={isScriptActionPending || !isWsConnected}
-              className="cursor-pointer rounded border border-[#444] px-2 py-1 text-[10px] text-gray-400 hover:bg-[#333] hover:text-white disabled:cursor-wait disabled:opacity-50"
             >
               {pendingScriptAction === "refresh" ? "Refreshing…" : "Refresh"}
-            </button>
-          </div>
+            </CompactButton>
+          }>Loaded Scripts</PanelHeader>
 
-          <div className="min-h-32 flex-1 space-y-1.5 overflow-auto">
+          <CompactScrollbar className="script-list">
             {scripts.map(scr => (
               <button
                 key={scr.id}
@@ -1171,43 +1118,30 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                   setSelectedScriptId(scr.id);
                   setScriptActionError("");
                 }}
-                className={`w-full cursor-pointer rounded border p-2 text-left ${
-                  selectedScriptId === scr.id 
-                    ? "bg-[#385d8a] border-[#486d9a] text-white" 
-                    : "bg-[#252525] border-[#333333] text-gray-300 hover:bg-[#2e2e2e]"
-                }`}
+                aria-pressed={selectedScriptId === scr.id}
+                className={`script-list-item ${selectedScriptId === scr.id ? "is-selected" : ""}`}
               >
-                <div className="font-bold text-xs">{scr.name}</div>
-                <div className="truncate text-[10px] text-gray-400">{scr.description}</div>
+                <strong>{scr.name}</strong>
+                <span>{scr.description}</span>
               </button>
             ))}
             {scripts.length === 0 && !isScriptActionPending && (
-              <div className="rounded border border-dashed border-[#3a3a3a] p-4 text-center text-[10px] text-gray-600">No scripts are loaded.</div>
+              <div className="empty-command-list">No scripts are loaded.</div>
             )}
-          </div>
-        </div>
+          </CompactScrollbar>
+        </DesktopPanel>
 
-        <div className="flex min-w-0 flex-1 flex-col gap-3 rounded border border-[#333333] bg-[#222222] p-3">
+        <DesktopPanel className="script-editor-panel">
           <form
             onSubmit={event => {
               event.preventDefault();
               void runScriptAction("load");
             }}
-            className="rounded border border-[#333] bg-[#1a1b1d] p-3"
+            className="script-load-form"
           >
-            <div className="mb-3 flex items-start gap-2 border-b border-[#333] pb-2.5">
-              <span className="rounded bg-[#385d8a]/25 p-1.5 text-blue-300">
-                <Plus className="h-3.5 w-3.5" />
-              </span>
-              <div>
-                <h3 className="text-xs font-bold text-gray-100">Load New Script</h3>
-                <p className="mt-0.5 text-[10px] text-gray-500">Register a Lua script that is available on the TeamServer.</p>
-              </div>
-            </div>
-
-            <label htmlFor="new-server-script-path" className="mb-1 block text-[11px] text-gray-300">Server-side path</label>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input
+            <CompactFormRow label="Server-side path" htmlFor="new-server-script-path" hint="Absolute path readable by the TeamServer process.">
+              <div className="inline-control-row">
+              <CompactInput
                 id="new-server-script-path"
                 type="text"
                 value={newScriptPath}
@@ -1220,61 +1154,59 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                 spellCheck={false}
                 disabled={isScriptActionPending}
                 aria-describedby="new-server-script-path-help"
-                className="min-w-0 flex-1 rounded border border-[#444] bg-[#141414] px-3 py-2 font-mono text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400 disabled:cursor-not-allowed disabled:opacity-60"
               />
-              <button
+              <CompactButton
                 type="submit"
                 disabled={isScriptActionPending || !isWsConnected || !newScriptPath.trim()}
-                className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded bg-[#385d8a] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#486d9a] disabled:cursor-not-allowed disabled:opacity-40"
+                variant="primary"
               >
                 <Plus className="h-3.5 w-3.5" />
                 {pendingScriptAction === "load" ? "Loading…" : "Load Script"}
-              </button>
-            </div>
-            <p id="new-server-script-path-help" className="mt-1.5 text-[10px] text-gray-600">
-              Enter an absolute path readable by the TeamServer process. Script files are not uploaded from this device.
-            </p>
+              </CompactButton>
+              </div>
+            </CompactFormRow>
+            <span id="new-server-script-path-help" className="sr-only">Script files are not uploaded from this device.</span>
           </form>
 
-          {scriptActionError && <p role="alert" className="rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{scriptActionError}</p>}
+          {scriptActionError && <p role="alert" className="desktop-alert desktop-alert--error panel-alert">{scriptActionError}</p>}
 
           {selectedScript ? (
-            <div className="flex min-h-0 flex-1 flex-col rounded border border-[#333] bg-[#18191b] p-3 text-[11px]">
-              <div className="flex flex-col gap-3 border-b border-[#333] pb-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="script-details">
+              <div className="script-details-header">
                 <div className="min-w-0">
                   <div className="font-bold text-gray-200">{selectedScript.name}</div>
                   <div className="mt-1 break-all font-mono text-gray-500">{selectedScript.id}</div>
                   <div className="mt-2 text-gray-400">Status: <span className="text-emerald-400">{selectedScript.status}</span></div>
                 </div>
-                <div className="flex shrink-0 gap-2">
-                  <button
+                <div className="grid-actions">
+                  <CompactButton
                     type="button"
                     title="Unload and load the selected script again"
                     onClick={() => void runScriptAction("reload")}
                     disabled={isScriptActionPending || !isWsConnected}
-                    className="flex cursor-pointer items-center gap-1.5 rounded border border-[#486d9a] bg-[#385d8a]/30 px-3 py-1.5 text-blue-200 hover:bg-[#385d8a]/60 disabled:cursor-not-allowed disabled:opacity-40"
+                    variant="secondary"
                   >
                     <RefreshCw className={`h-3 w-3 ${pendingScriptAction === "reload" ? "animate-spin" : ""}`} />
                     {pendingScriptAction === "reload" ? "Reloading…" : "Reload"}
-                  </button>
-                  <button
+                  </CompactButton>
+                  <CompactButton
                     type="button"
                     onClick={() => void runScriptAction("unload")}
                     disabled={isScriptActionPending || !isWsConnected}
-                    className="cursor-pointer rounded border border-red-900/70 bg-red-950/30 px-3 py-1.5 text-red-300 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:opacity-40"
+                    variant="danger"
                   >
                     {pendingScriptAction === "unload" ? "Unloading…" : "Unload"}
-                  </button>
+                  </CompactButton>
                 </div>
               </div>
-              <pre className="mt-3 whitespace-pre-wrap break-all font-mono text-[10px] text-gray-500">{selectedScript.content}</pre>
+              <pre className="script-source">{selectedScript.content}</pre>
             </div>
           ) : (
-            <div className="flex min-h-32 flex-1 items-center justify-center rounded border border-dashed border-[#333] px-4 text-center text-[11px] text-gray-600">
+            <div className="empty-desktop-panel script-empty-state">
               Load a new script above or select a loaded script to manage it.
             </div>
           )}
-        </div>
+        </DesktopPanel>
       </div>
     );
   };
@@ -1282,37 +1214,30 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   // 8. WebSocket Event Monitor
   const renderEventMonitor = () => {
     return (
-      <div className="bg-[#1e1e1e] p-3 text-gray-300 h-full overflow-hidden flex flex-col font-mono text-xs">
-        <div className="mb-2 flex items-center justify-end font-sans">
-          <span className="text-[10px] text-gray-500">{packets.length} / 1000 events</span>
-        </div>
-
-        <div className="border border-[#333333] rounded overflow-auto flex-1 bg-[#141414]">
-          <div className="min-w-[850px]">
-            <div className="sticky top-0 z-10 grid grid-cols-[100px_90px_100px_75px_130px_minmax(300px,1fr)] gap-2 border-b border-[#3b3b3b] bg-[#252526] px-2 py-1.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">
-              <span>Time</span>
-              <span>Direction</span>
-              <span>Transport</span>
-              <span>Size</span>
-              <span>Encryption</span>
-              <span>Payload</span>
-            </div>
+      <DesktopPanel className="console-data-panel">
+        <PanelHeader actions={<span className="panel-counter">{packets.length} / 1000 events</span>}>WebSocket Event Monitor</PanelHeader>
+        <CompactScrollbar className="console-grid-scroll">
+          <DataGrid aria-label="WebSocket event monitor" className="event-monitor-grid">
+            <colgroup>
+              <col style={{ width: 110 }} /><col style={{ width: 90 }} /><col style={{ width: 110 }} />
+              <col style={{ width: 80 }} /><col style={{ width: 130 }} /><col />
+            </colgroup>
+            <thead><tr><th>Time</th><th>Direction</th><th>Transport</th><th>Size</th><th>Encryption</th><th>Payload</th></tr></thead>
+            <tbody>
             {packets.map((pkt) => (
-              <div
-                key={pkt.id}
-                className="grid grid-cols-[100px_90px_100px_75px_130px_minmax(300px,1fr)] gap-2 border-b border-[#292929] px-2 py-1.5 text-[11px] hover:bg-[#222222]"
-              >
-                <span className="text-gray-500">{pkt.timestamp}</span>
-                <span className="font-bold text-gray-300">{pkt.direction}</span>
-                <span className="text-gray-400">{pkt.type}</span>
-                <span className="text-gray-400">{pkt.sizeIsLowerBound ? "≥" : ""}{pkt.size} B</span>
-                <span className="text-gray-400">{pkt.encryption}</span>
-                <span className="select-text break-all text-gray-300">{pkt.payload}</span>
-              </div>
+              <tr key={pkt.id}>
+                <td>{pkt.timestamp}</td><td>{pkt.direction}</td><td>{pkt.type}</td>
+                <td>{pkt.sizeIsLowerBound ? "≥" : ""}{pkt.size} B</td><td>{pkt.encryption}</td>
+                <td className="select-text" title={pkt.payload}>{pkt.payload}</td>
+              </tr>
             ))}
-          </div>
-        </div>
-      </div>
+            {packets.length === 0 && (
+              <tr><td colSpan={6} className="empty-grid-cell">No WebSocket events captured.</td></tr>
+            )}
+            </tbody>
+          </DataGrid>
+        </CompactScrollbar>
+      </DesktopPanel>
     );
   };
 
@@ -1354,9 +1279,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e1e] border border-[#2b2b2b] select-none text-xs font-sans">
-      {/* Tab bar header */}
-      <div className="flex items-center bg-[#252526] border-b border-[#2b2b2b] overflow-x-auto select-none">
+    <div className="console-workspace">
+      <TabStrip>
         {tabs.map((t) => {
           const isActive = t.id === activeTabId;
           const isEventLog = t.type === "event_log";
@@ -1365,29 +1289,35 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
             <div
               key={t.id}
               onClick={() => onSetActiveTab(t.id)}
-              className={`flex items-center space-x-2 px-3 py-1.5 border-r border-[#2d2d2d] cursor-pointer transition-colors ${
-                isActive 
-                  ? "bg-[#1e1e1e] text-white font-bold border-t-2 border-gray-400" 
-                  : "bg-[#2d2d2d] text-[#A0A0A0] hover:bg-[#252526] hover:text-white"
-              }`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSetActiveTab(t.id);
+                }
+              }}
+              role="tab"
+              tabIndex={isActive ? 0 : -1}
+              aria-selected={isActive}
+              className={`tab-button ${isActive ? "is-active" : ""}`}
             >
-              <span className="text-xs truncate max-w-[130px]">{t.title}</span>
+              <span>{t.title}</span>
               
               {!isEventLog && (
-                <button
+                <CompactIconButton
                   onClick={(e) => {
                     e.stopPropagation();
                     onCloseTab(t.id);
                   }}
-                  className="hover:bg-[#444] text-gray-400 hover:text-white p-0.5 rounded cursor-pointer ml-1"
+                  className="tab-close-button"
+                  aria-label={`Close ${t.title} tab`}
                 >
-                  <X className="w-3 h-3 text-gray-400" />
-                </button>
+                  <X />
+                </CompactIconButton>
               )}
             </div>
           );
         })}
-      </div>
+      </TabStrip>
 
       {/* Main Terminal View */}
       <div className="flex-1 min-h-0 relative">
@@ -1396,10 +1326,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
       {/* Command prompt execution bar */}
       {activeTab && (activeTab.type === "session" || activeTab.type === "event_log") && (
-        <div className="bg-[#111111] border-t border-[#2d2d2d] flex flex-col font-mono">
+        <div className="command-dock">
           {/* Prompt Form */}
-          <form onSubmit={handleCommandSubmit} className="flex items-center px-2 py-1 bg-[#000000] text-xs">
-            <span className="text-[#00FF00] font-bold mr-2 select-none">
+          <form onSubmit={handleCommandSubmit} className="command-line">
+            <span className="command-prompt">
               {activeTab.type === "session" ? "session>" : "event>"}
             </span>
             <input
@@ -1407,7 +1337,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
               value={commandInput}
               onChange={(e) => setCommandInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="flex-1 bg-transparent text-[#00FF00] font-mono outline-none text-xs"
+              className="command-input"
               autoFocus
             />
             <button
@@ -1419,8 +1349,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
           </form>
 
           {/* Active operator badge */}
-          <div className="bg-[#111111] px-2 py-1 flex items-center space-x-2 border-t border-[#222222]">
-            <span className="bg-[#242b58] text-[#8397ff] border border-[#3e4a9e] px-2 py-0.5 rounded text-xs font-bold font-mono">
+          <div className="command-status">
+            <span>
               {operatorName}@{serverHost}
             </span>
           </div>

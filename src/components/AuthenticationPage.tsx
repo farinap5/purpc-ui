@@ -1,5 +1,14 @@
 import { FormEvent, useState } from "react";
 import { ConnectionSettings } from "../types";
+import {
+  CompactButton,
+  CompactFormGrid,
+  CompactFormRow,
+  CompactInput,
+  DesktopWindow,
+  StatusBar,
+  WindowTitleBar
+} from "./desktop";
 
 interface AuthenticationPageProps {
   initialSettings: ConnectionSettings;
@@ -55,17 +64,14 @@ export function AuthenticationPage({ initialSettings, onConnect }: Authenticatio
   };
 
   return (
-    <main className="min-h-screen bg-[#151618] text-white flex items-center justify-center p-4 font-sans">
-      <section className="w-full max-w-md overflow-hidden rounded border border-[#393b40] bg-[#242528] shadow-2xl">
-        <header className="border-b border-[#393b40] bg-[#1c1d1f] px-5 py-4">
-          <h1 className="text-base font-semibold tracking-wide">PurpleCommand</h1>
-          <p className="mt-1 text-xs text-gray-400">Connect to your server</p>
-        </header>
+    <main className="desktop-app authentication-shell">
+      <DesktopWindow className="authentication-window">
+        <WindowTitleBar title="PurpleCommand" subtitle="TeamServer connection" />
 
-        <form onSubmit={handleSubmit} className="space-y-4 p-5">
-          <div>
-            <label htmlFor="auth-username" className="mb-1.5 block text-xs text-gray-300">Username</label>
-            <input
+        <form onSubmit={handleSubmit} className="authentication-form">
+          <CompactFormGrid>
+            <CompactFormRow label="Username" htmlFor="auth-username">
+              <CompactInput
               id="auth-username"
               type="text"
               value={username}
@@ -73,13 +79,11 @@ export function AuthenticationPage({ initialSettings, onConnect }: Authenticatio
               placeholder={DEFAULT_USERNAME}
               autoComplete="username"
               autoFocus
-              className="w-full rounded border border-[#474a50] bg-[#18191b] px-3 py-2 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-violet-400"
-            />
-          </div>
+              />
+            </CompactFormRow>
 
-          <div>
-            <label htmlFor="auth-token" className="mb-1.5 block text-xs text-gray-300">Token</label>
-            <input
+            <CompactFormRow label="Token" htmlFor="auth-token" required>
+              <CompactInput
               id="auth-token"
               type="password"
               value={token}
@@ -87,41 +91,43 @@ export function AuthenticationPage({ initialSettings, onConnect }: Authenticatio
               placeholder={TOKEN_EXAMPLE}
               autoComplete="off"
               required
-              className="w-full rounded border border-[#474a50] bg-[#18191b] px-3 py-2 font-mono text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400"
-            />
-          </div>
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "authentication-error" : undefined}
+              />
+            </CompactFormRow>
 
-          <div>
-            <label htmlFor="auth-server" className="mb-1.5 block text-xs text-gray-300">Server Address</label>
-            <input
+            <CompactFormRow label="Server Address" htmlFor="auth-server">
+              <CompactInput
               id="auth-server"
               type="url"
               value={serverAddress}
               onChange={(event) => setServerAddress(event.target.value)}
               placeholder={DEFAULT_SERVER_ADDRESS}
-              className="w-full rounded border border-[#474a50] bg-[#18191b] px-3 py-2 font-mono text-xs text-white outline-none transition placeholder:text-gray-600 focus:border-violet-400"
-            />
-          </div>
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? "authentication-error" : undefined}
+              />
+            </CompactFormRow>
+          </CompactFormGrid>
 
           {error && (
-            <p role="alert" className="rounded border border-red-900/80 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+            <p id="authentication-error" role="alert" className="desktop-alert desktop-alert--error">
               {error}
             </p>
           )}
 
-          <button
+          <div className="authentication-actions">
+            <CompactButton
             type="submit"
             disabled={isConnecting}
-            className="w-full cursor-pointer rounded bg-[#385d8a] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#486d9a] focus:outline-none focus:ring-2 focus:ring-violet-400 disabled:cursor-wait disabled:opacity-60"
-          >
-            {isConnecting ? "Connecting…" : "Connect"}
-          </button>
-
-          <p className="text-center text-[10px] text-gray-500">
-            Credentials remain in memory for this browser session only.
-          </p>
+            variant="primary"
+            className="authentication-submit"
+            >
+              {isConnecting ? "Connecting…" : "Connect"}
+            </CompactButton>
+          </div>
         </form>
-      </section>
+        <StatusBar>Credentials remain in memory for this application session only.</StatusBar>
+      </DesktopWindow>
     </main>
   );
 }

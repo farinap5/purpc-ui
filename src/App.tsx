@@ -889,7 +889,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#1E1E1E] text-white overflow-hidden font-sans">
+    <div className="desktop-app">
       
       {/* 1. Menu Bar and quick toolbars */}
       <C2Toolbar 
@@ -907,11 +907,11 @@ export default function App() {
       />
 
       {/* 2. Interactive Workspace layout */}
-      <div ref={workspaceRef} className="flex-1 flex flex-col min-h-0 bg-[#252526]">
+      <div ref={workspaceRef} className="workspace-split">
         
         {/* UPPER PANEL: Sessions / Targets table */}
         <div
-          className="shrink-0 min-h-0 bg-[#1e1e1e]"
+          className="workspace-pane workspace-pane--upper"
           style={{ height: `${upperPanelHeight}%` }}
         >
           <C2SessionTable 
@@ -969,22 +969,16 @@ export default function App() {
               setUpperPanelHeight(getPanelSplitLimits().max);
             }
           }}
-          className={`group relative h-2 shrink-0 touch-none cursor-row-resize border-y outline-none transition-colors ${
-            isResizingPanels
-              ? "bg-[#385d8a] border-[#486d9a]"
-              : "bg-[#202124] border-[#303236] hover:bg-[#30343a] focus:bg-[#30343a] focus:border-[#6f82a0]"
-          }`}
+          className={`workspace-splitter ${isResizingPanels ? "is-active" : ""}`}
         >
           <span
             aria-hidden="true"
-            className={`absolute left-1/2 top-1/2 h-0.5 w-12 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors ${
-              isResizingPanels ? "bg-white" : "bg-[#60646b] group-hover:bg-[#a0a4ab] group-focus:bg-[#a0a4ab]"
-            }`}
+            className="workspace-splitter-grip"
           />
         </div>
 
         {/* LOWER PANEL: Consolidated Tabbed consoles */}
-        <div className="flex-1 min-h-0 bg-[#121315]">
+        <div className="workspace-pane workspace-pane--lower">
           <C2Console 
             tabs={tabs}
             activeTabId={activeTabId}

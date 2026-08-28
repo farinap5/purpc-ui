@@ -14,6 +14,7 @@ import {
   Zap, 
   TerminalSquare
 } from "lucide-react";
+import { CompactIconButton, Toolbar } from "./desktop";
 
 interface ToolbarProps {
   onAddTab: (type: ConsoleTabType, title: string, id?: string) => void;
@@ -107,17 +108,16 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
   };
 
   return (
-    <div className="bg-[#2B2C2E] border-b border-[#1C1D1F] select-none text-[#C5C7CA] text-xs font-sans">
-      {/* 1. Top File Menu Bar */}
-      <div className="flex items-center justify-between px-2 py-0.5 bg-[#212224] border-b border-[#1A1B1C] text-[#B0B3B8]">
-        <div className="flex items-center space-x-1 font-sans">
+    <header className="application-chrome">
+      <div className="menu-bar">
+        <nav className="menu-bar-items" aria-label="Application menu">
           {Object.keys(menus).map((menuName) => (
-            <div key={menuName} className="relative">
+            <div key={menuName} className="menu-root">
               <button
                 onClick={() => handleMenuClick(menuName)}
-                className={`px-2 py-0.5 rounded cursor-pointer transition-colors text-xs text-gray-300 hover:bg-[#383A3D] hover:text-white ${
-                  activeMenu === menuName ? "bg-[#383A3D] text-white" : ""
-                }`}
+                className={`menu-bar-button ${activeMenu === menuName ? "is-active" : ""}`}
+                aria-haspopup="menu"
+                aria-expanded={activeMenu === menuName}
               >
                 {menuName}
               </button>
@@ -127,7 +127,7 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
                     className="fixed inset-0 z-40"
                     onClick={() => setActiveMenu(null)}
                   />
-                  <div className="absolute left-0 mt-0.5 w-52 bg-[#252628] border border-[#3E4044] rounded shadow-xl z-50 py-1 text-[#E0E0E0]">
+                  <div className="desktop-menu" role="menu">
                     {menus[menuName].map((item, idx) => (
                       <button
                         key={idx}
@@ -136,11 +136,8 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
                           setActiveMenu(null);
                           item.action();
                         }}
-                        className={`w-full text-left px-3 py-1 transition-colors text-xs ${
-                          item.disabled
-                            ? "bg-[#202124] text-gray-600 cursor-not-allowed"
-                            : "hover:bg-[#3D4044] hover:text-white cursor-pointer"
-                        }`}
+                        className="desktop-menu-item"
+                        role="menuitem"
                       >
                         {item.label}
                       </button>
@@ -150,149 +147,128 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
               )}
             </div>
           ))}
-        </div>
+        </nav>
         
-        {/* Status indicator - Muted gray palette */}
-        <div className="flex items-center space-x-3 text-[11px] font-mono text-gray-400">
-          <div className="flex items-center space-x-1.5">
-            <span className={`w-2 h-2 rounded-full ${isWsConnected ? "bg-gray-300" : "bg-gray-600"}`}></span>
+        <div className="chrome-status">
+          <div className="chrome-status-group">
+            <span className={`connection-led ${isWsConnected ? "is-connected" : ""}`} />
             <span>{isWsConnected ? "WS: CONNECTED" : "WS: DISCONNECTED"}</span>
           </div>
-          <span>|</span>
-          <span>Sessions: <span className="text-gray-200 font-bold">{sessionsCount}</span></span>
-          <span>|</span>
-          <span>Listeners: <span className="text-gray-200 font-bold">{activeListenersCount}</span></span>
-          <span>|</span>
+          <span className="chrome-separator" />
+          <span>Sessions: <strong>{sessionsCount}</strong></span>
+          <span className="chrome-separator" />
+          <span>Listeners: <strong>{activeListenersCount}</strong></span>
+          <span className="chrome-separator" />
           <span>{currentLag}ms lag</span>
         </div>
       </div>
 
-      {/* 2. Visual Toolbar - All icons are exact same gray color (text-gray-400) or text button */}
-      <div className="flex items-center justify-between px-2 py-1 bg-[#333437] border-b border-[#212224]">
-        <div className="flex items-center space-x-1">
-          {/* WS Connect Button - gray icon */}
-          <button
+      <Toolbar className="quick-toolbar">
+        <div className="toolbar-group">
+          <CompactIconButton
             onClick={isWsConnected ? onDisconnectWs : onConnectWs}
             title={isWsConnected ? "Disconnect from TeamServer" : "Connect to TeamServer"}
             aria-label={isWsConnected ? "Disconnect from TeamServer" : "Connect to TeamServer"}
-            className={`p-1 rounded transition cursor-pointer border hover:text-white hover:bg-[#424448] ${
-              isWsConnected
-                ? "text-gray-300 border-[#424448] bg-[#333437]"
-                : "text-gray-600 border-[#303236] bg-[#202124] opacity-60 grayscale"
-            }`}
+            className={isWsConnected ? "is-active" : ""}
           >
-            <Zap className="w-4 h-4 text-gray-400" />
-          </button>
+            <Zap />
+          </CompactIconButton>
           
-          <div className="h-4 w-[1px] bg-[#222325] mx-1"></div>
+          <span className="toolbar-separator" />
 
-          {/* All tab buttons with standard gray icons (text-gray-400) */}
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("listeners", "C2 Listeners")}
             title="Configure C2 Listeners"
             aria-label="Configure C2 Listeners"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <Radio className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Radio />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("sessions", "Active Sessions")}
             title="View Active Sessions"
             aria-label="View Active Sessions"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <TerminalSquare className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <TerminalSquare />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("loots", "Secrets")}
             title="Secrets"
             aria-label="Secrets"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <Key className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Key />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("downloads", "Looted Files")}
             title="Loot: Downloaded Target Files"
             aria-label="Downloaded Target Files"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <Download className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Download />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("images", "Device Images")}
             title="Images collected from devices"
             aria-label="Device Images"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <Camera className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Camera />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("scripts", "Lua Script Manager")}
             title="Manage Lua Scripts"
             aria-label="Manage Lua Scripts"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <FileCode className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <FileCode />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("users", "User Management")}
             title="Manage TeamServer Users"
             aria-label="Manage TeamServer Users"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <UsersRound className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <UsersRound />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("event_log", "Team Server Event Log")}
             title="Chat and system event log"
             aria-label="Chat and System Event Log"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <MessageSquare className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <MessageSquare />
+          </CompactIconButton>
 
-          <button
+          <CompactIconButton
             onClick={() => onAddTab("packets", "Event Monitor")}
             title="Event Monitor"
             aria-label="Event Monitor"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
           >
-            <Activity className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Activity />
+          </CompactIconButton>
 
-          <div className="h-4 w-[1px] bg-[#222325] mx-1"></div>
+          <span className="toolbar-separator" />
 
-          {/* Quick Payload Gen */}
-          <button
+          <CompactIconButton
             onClick={onTriggerPayloadModal}
             title="Generate Encrypted C2 Agent Executable"
             aria-label="Generate Encrypted C2 Agent Executable"
-            className="p-1 text-gray-300 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer bg-[#2b2c2e]"
           >
-            <Server className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Server />
+          </CompactIconButton>
         </div>
 
-        {/* Right quick settings */}
-        <div className="flex items-center space-x-2">
-          <button
+        <div className="toolbar-group">
+          <CompactIconButton
             onClick={onTriggerSettingsModal}
-            className="p-1 text-gray-400 hover:text-white hover:bg-[#424448] rounded border border-[#3E4044] transition cursor-pointer"
             title="PurpleCommand Configuration Panel"
             aria-label="PurpleCommand Configuration Panel"
           >
-            <Settings className="w-3.5 h-3.5 text-gray-400" />
-          </button>
+            <Settings />
+          </CompactIconButton>
         </div>
-      </div>
-    </div>
+      </Toolbar>
+    </header>
   );
 };

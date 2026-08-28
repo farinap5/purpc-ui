@@ -1,5 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { TeamBuild } from "../api/teamApi";
+import {
+  CompactButton,
+  CompactInput,
+  CompactScrollbar,
+  CompactSelect,
+  DataGrid,
+  DesktopModal,
+  StatusBar
+} from "./desktop";
 
 interface BuildManagerProps {
   builds: TeamBuild[];
@@ -57,13 +66,13 @@ const formatDate = (value?: string) => {
 const statusClass = (status: string) => {
   switch (status.toLowerCase()) {
     case "completed":
-      return "border-emerald-800 bg-emerald-950/40 text-emerald-300";
+      return "is-completed";
     case "failed":
-      return "border-red-900 bg-red-950/40 text-red-300";
+      return "is-failed";
     case "running":
-      return "border-violet-800 bg-violet-950/40 text-violet-300";
+      return "is-running";
     default:
-      return "border-amber-900 bg-amber-950/30 text-amber-300";
+      return "is-queued";
   }
 };
 
@@ -171,7 +180,7 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
         event.preventDefault();
         updateColumnWidth(key, columnWidths[key] + (event.key === "ArrowRight" ? 12 : -12));
       }}
-      className="absolute inset-y-0 right-0 w-2 translate-x-1 cursor-col-resize touch-none outline-none after:absolute after:inset-y-1 after:left-1/2 after:w-px after:bg-[#45474b] hover:after:bg-violet-400 focus:after:bg-violet-400"
+      className="build-column-resizer"
     />
   );
 
@@ -206,67 +215,62 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
   const tableWidth = buildColumns.reduce((total, column) => total + columnWidths[column.key], 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 font-sans text-xs text-gray-300">
-      <div className="flex max-h-[94vh] w-full max-w-[96vw] flex-col overflow-hidden rounded border border-[#3E4044] bg-[#242528] shadow-2xl">
-        <header className="flex items-center justify-between border-b border-[#3E4044] bg-[#1C1D1F] px-4 py-3">
-          <div>
-            <h2 className="font-bold text-gray-100">TeamServer Builds</h2>
-            <p className="mt-0.5 text-[10px] text-gray-500">Download artifacts and remove completed or failed build history.</p>
-          </div>
-          <button type="button" onClick={onClose} className="cursor-pointer rounded px-2 py-1 text-gray-400 hover:bg-[#333] hover:text-white">Close</button>
-        </header>
-
-        <div className="flex min-h-0 flex-1 flex-col p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
-            <input
+    <DesktopModal
+      title="TeamServer Builds"
+      subtitle="Download artifacts and manage build history"
+      onClose={onClose}
+      width="900px"
+    >
+        <div className="build-manager-layout">
+          <div className="build-toolbar">
+            <CompactInput
               type="search"
               value={query}
               onChange={event => setQuery(event.target.value)}
               placeholder="Search ID, profile, builder, artifact or error"
               aria-label="Search builds"
-              className="min-w-64 flex-1 rounded border border-[#444] bg-[#17181A] px-3 py-1.5 text-gray-200 outline-none transition placeholder:text-gray-600 focus:border-violet-400"
+              className="build-search"
             />
-            <select
+            <CompactSelect
               value={statusFilter}
               onChange={event => setStatusFilter(event.target.value)}
               aria-label="Filter builds by status"
-              className="rounded border border-[#444] bg-[#17181A] px-3 py-1.5 text-gray-300 outline-none transition focus:border-violet-400"
+              className="build-status-filter"
             >
               <option value="all">All statuses</option>
               <option value="queued">Queued</option>
               <option value="running">Running</option>
               <option value="completed">Completed</option>
               <option value="failed">Failed</option>
-            </select>
-            <button
+            </CompactSelect>
+            <CompactButton
               type="button"
               onClick={() => void refresh()}
               disabled={isLoading || Boolean(actionID)}
-              className="cursor-pointer rounded border border-[#444] px-3 py-1.5 text-gray-300 hover:bg-[#333] hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isLoading ? "Refreshing…" : "Refresh"}
-            </button>
+            </CompactButton>
           </div>
 
-          <div className="mb-2 flex min-h-4 items-center justify-between text-[10px] text-gray-500">
+          <StatusBar className="build-status-bar">
             <span>Showing {filteredBuilds.length} of {builds.length}</span>
-            {hasActiveBuilds && <span className="text-violet-300">Following live TeamServer build events</span>}
-          </div>
+            {hasActiveBuilds && <span className="active-build-indicator">Following live TeamServer build events</span>}
+          </StatusBar>
 
-          {error && <p className="mb-3 rounded border border-red-900/70 bg-red-950/30 p-2 text-red-300">{error}</p>}
-          {notice && <p className="mb-3 rounded border border-emerald-900/70 bg-emerald-950/20 p-2 text-emerald-300">{notice}</p>}
+          {error && <p role="alert" className="desktop-alert desktop-alert--error">{error}</p>}
+          {notice && <p className="desktop-alert desktop-alert--success">{notice}</p>}
 
-          <div className="min-h-0 flex-1 overflow-auto rounded border border-[#333] bg-[#18191B]">
-            <table className="table-fixed border-collapse text-left" style={{ width: `max(100%, ${tableWidth}px)` }}>
+          <CompactScrollbar className="build-grid-scroll">
+            <DataGrid aria-label="TeamServer builds" style={{ width: `max(100%, ${tableWidth}px)` }}>
               <colgroup>
                 {buildColumns.map(column => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}
               </colgroup>
-              <thead className="sticky top-0 z-10 bg-[#292A2D] text-[10px] uppercase text-gray-500">
+              <thead>
                 <tr>
                   {buildColumns.map(column => (
                     <th
                       key={column.key}
-                      className={`relative select-none px-3 py-2 ${column.key === "actions" ? "text-right" : ""}`}
+                      className={`relative select-none ${column.key === "actions" ? "text-right" : ""}`}
                     >
                       {column.label}
                       {renderResizeHandle(column.key, column.label)}
@@ -274,42 +278,42 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#303236]">
+              <tbody>
                 {filteredBuilds.map(build => {
                   const status = build.status.toLowerCase();
                   const isActive = activeStatuses.has(status);
                   const canDownload = status === "completed" && Boolean(build.download_url);
                   return (
-                    <tr key={build.id} className="align-middle hover:bg-[#222326]">
-                      <td className="overflow-hidden px-3 py-2.5">
-                        <span className={`inline-block rounded border px-2 py-0.5 font-bold uppercase ${statusClass(status)}`}>{build.status}</span>
-                        {build.error && <span title={build.error} className="mt-1 block truncate text-[10px] text-red-300">{build.error}</span>}
+                    <tr key={build.id}>
+                      <td>
+                        <span className={`build-status ${statusClass(status)}`}>{build.status}</span>
+                        {build.error && <span title={build.error} className="build-error-text">{build.error}</span>}
                       </td>
-                      <td title={build.profile} className="truncate px-3 py-2.5 text-gray-200">{build.profile}</td>
-                      <td title={build.builder} className="truncate px-3 py-2.5 text-gray-300">{build.builder || "—"}</td>
-                      <td title={build.artifact_name} className="select-text truncate px-3 py-2.5 font-mono text-gray-300">{build.artifact_name || "—"}</td>
-                      <td title={build.created_at} className="truncate px-3 py-2.5 text-gray-400">{formatDate(build.created_at)}</td>
-                      <td title={build.completed_at} className="truncate px-3 py-2.5 text-gray-400">{formatDate(build.completed_at)}</td>
-                      <td title={build.id} className="select-text truncate px-3 py-2.5 font-mono text-[10px] text-gray-500">{build.id}</td>
-                      <td className="px-3 py-2.5">
-                        <div className="flex justify-end gap-2">
-                          <button
+                      <td title={build.profile}>{build.profile}</td>
+                      <td title={build.builder}>{build.builder || "—"}</td>
+                      <td title={build.artifact_name} className="select-text">{build.artifact_name || "—"}</td>
+                      <td title={build.created_at}>{formatDate(build.created_at)}</td>
+                      <td title={build.completed_at}>{formatDate(build.completed_at)}</td>
+                      <td title={build.id} className="select-text text-[10px] text-gray-500">{build.id}</td>
+                      <td>
+                        <div className="grid-actions">
+                          <CompactButton
                             type="button"
                             onClick={() => void download(build)}
                             disabled={!canDownload || Boolean(actionID)}
-                            className="cursor-pointer rounded border border-violet-900 px-2 py-1 text-violet-200 hover:bg-violet-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+                            variant="secondary"
                           >
                             {actionID === `download:${build.id}` ? "Downloading…" : "Download"}
-                          </button>
-                          <button
+                          </CompactButton>
+                          <CompactButton
                             type="button"
                             onClick={() => void deleteBuild(build)}
                             disabled={isActive || Boolean(actionID)}
                             title={isActive ? "Queued and running builds cannot be deleted." : "Delete build and its managed artifact"}
-                            className="cursor-pointer rounded border border-red-900 px-2 py-1 text-red-300 hover:bg-red-950/50 disabled:cursor-not-allowed disabled:opacity-40"
+                            variant="danger"
                           >
                             {actionID === `delete:${build.id}` ? "Deleting…" : "Delete"}
-                          </button>
+                          </CompactButton>
                         </div>
                       </td>
                     </tr>
@@ -317,19 +321,18 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
                 })}
                 {!isLoading && filteredBuilds.length === 0 && (
                   <tr>
-                    <td colSpan={buildColumns.length} className="h-52 text-center text-gray-600">
+                    <td colSpan={buildColumns.length} className="empty-grid-cell">
                       {builds.length === 0 ? "No builds found on the TeamServer." : "No builds match the current filters."}
                     </td>
                   </tr>
                 )}
                 {isLoading && builds.length === 0 && (
-                  <tr><td colSpan={buildColumns.length} className="h-52 text-center text-gray-600">Loading builds…</td></tr>
+                  <tr><td colSpan={buildColumns.length} className="empty-grid-cell">Loading builds…</td></tr>
                 )}
               </tbody>
-            </table>
-          </div>
+            </DataGrid>
+          </CompactScrollbar>
         </div>
-      </div>
-    </div>
+    </DesktopModal>
   );
 };
