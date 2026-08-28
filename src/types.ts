@@ -95,6 +95,8 @@ export interface Packet {
   direction: "INBOUND" | "OUTBOUND" | "SYSTEM";
   type: "WebSocket" | "HTTP";
   size: number;
+  sizeIsLowerBound?: boolean;
+  capturedSize?: number;
   encryption: string;
   payload: string;
 }

@@ -40,7 +40,6 @@ const defaultProfile = (): TeamProfile => ({
   ots: "",
   ots_configured: false,
   output: "implant",
-  template: "./template",
   public_key: "server.pub"
 });
 
@@ -55,7 +54,6 @@ const editableFields: Array<{
   { property: "os", apiKey: "OS", label: "Operating system", placeholder: "linux" },
   { property: "arch", apiKey: "ARCH", label: "Architecture", placeholder: "amd64" },
   { property: "output", apiKey: "OUTPUT", label: "Output", placeholder: "implant" },
-  { property: "template", apiKey: "TEMPLATE", label: "Template", placeholder: "./template" },
   { property: "public_key", apiKey: "PUBLICKEY", label: "Public key", placeholder: "server.pub" }
 ];
 
@@ -72,15 +70,19 @@ const nextDuplicateName = (name: string, profiles: TeamProfile[]) => {
   return `${stem}${suffix}`;
 };
 
-const normalizeProfile = (profile: TeamProfile): TeamProfile => ({
-  ...profile,
-  os_options: profile.os_options?.length ? profile.os_options : [profile.os],
-  arch_options: profile.arch_options?.length ? profile.arch_options : [profile.arch],
-  protocol: profile.protocol || "generic",
-  options: profile.options && typeof profile.options === "object" && !Array.isArray(profile.options) ? profile.options : {},
-  ots: "",
-  ots_configured: Boolean(profile.ots_configured)
-});
+const normalizeProfile = (profile: TeamProfile): TeamProfile => {
+  const { template: _legacyTemplate, ...currentProfile } = profile as TeamProfile & { template?: unknown };
+  void _legacyTemplate;
+  return {
+    ...currentProfile,
+    os_options: profile.os_options?.length ? profile.os_options : [profile.os],
+    arch_options: profile.arch_options?.length ? profile.arch_options : [profile.arch],
+    protocol: profile.protocol || "generic",
+    options: profile.options && typeof profile.options === "object" && !Array.isArray(profile.options) ? profile.options : {},
+    ots: "",
+    ots_configured: Boolean(profile.ots_configured)
+  };
+};
 
 const formatOptions = (options: Record<string, unknown>) => JSON.stringify(options, null, 2);
 
@@ -418,7 +420,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                   />
                 </label>
                 {editableFields.map(field => (
-                  <label key={field.property} className={field.property === "template" || field.property === "public_key" ? "sm:col-span-2" : ""}>
+                  <label key={field.property} className={field.property === "public_key" ? "sm:col-span-2" : ""}>
                     <span className="mb-1 block text-gray-400">{field.label}</span>
                     <input
                       value={form[field.property]}

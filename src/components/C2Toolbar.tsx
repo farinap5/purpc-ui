@@ -81,9 +81,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
       { label: "Event Monitor", action: () => onAddTab("packets", "Event Monitor") }
     ],
     "Payload": [
-      { label: "Payload Generator", action: onTriggerPayloadModal },
-      { label: "Manage Builds", action: onTriggerBuildManager },
-      { label: "Profiles", action: onTriggerProfileModal }
+      { label: "Payload Builder", action: onTriggerPayloadModal },
+      { label: "Payload Builds", action: onTriggerBuildManager },
+      { label: "Payload Profiles", action: onTriggerProfileModal }
     ],
     "Administration": [
       { label: "Manage Users", action: () => onAddTab("users", "User Management") }

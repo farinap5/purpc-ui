@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { TeamBuild } from "../api/teamApi";
 
 interface BuildManagerProps {
+  builds: TeamBuild[];
   isOpen: boolean;
   onClose: () => void;
   onList: () => Promise<TeamBuild[]>;
@@ -9,11 +10,12 @@ interface BuildManagerProps {
   onDownload: (build: TeamBuild) => Promise<void>;
 }
 
-type BuildColumnKey = "status" | "profile" | "artifact" | "created" | "completed" | "id" | "actions";
+type BuildColumnKey = "status" | "profile" | "builder" | "artifact" | "created" | "completed" | "id" | "actions";
 
 const buildColumns: Array<{ key: BuildColumnKey; label: string }> = [
   { key: "status", label: "Status" },
   { key: "profile", label: "Profile" },
+  { key: "builder", label: "Builder" },
   { key: "artifact", label: "Artifact" },
   { key: "created", label: "Created" },
   { key: "completed", label: "Completed" },
@@ -24,6 +26,7 @@ const buildColumns: Array<{ key: BuildColumnKey; label: string }> = [
 const initialColumnWidths: Record<BuildColumnKey, number> = {
   status: 125,
   profile: 145,
+  builder: 145,
   artifact: 190,
   created: 175,
   completed: 175,
@@ -34,6 +37,7 @@ const initialColumnWidths: Record<BuildColumnKey, number> = {
 const minimumColumnWidths: Record<BuildColumnKey, number> = {
   status: 100,
   profile: 90,
+  builder: 100,
   artifact: 120,
   created: 135,
   completed: 135,
@@ -42,11 +46,6 @@ const minimumColumnWidths: Record<BuildColumnKey, number> = {
 };
 
 const activeStatuses = new Set(["queued", "running"]);
-
-const sortBuilds = (items: TeamBuild[]) => [...items].sort((left, right) => {
-  const difference = Date.parse(right.created_at) - Date.parse(left.created_at);
-  return Number.isNaN(difference) || difference === 0 ? left.id.localeCompare(right.id) : difference;
-});
 
 const formatDate = (value?: string) => {
   if (!value) return "—";
@@ -69,13 +68,13 @@ const statusClass = (status: string) => {
 };
 
 export const BuildManager: React.FC<BuildManagerProps> = ({
+  builds,
   isOpen,
   onClose,
   onList,
   onDelete,
   onDownload
 }) => {
-  const [builds, setBuilds] = useState<TeamBuild[]>([]);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [columnWidths, setColumnWidths] = useState(initialColumnWidths);
@@ -83,19 +82,12 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
   const [actionID, setActionID] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const buildsRef = useRef<TeamBuild[]>([]);
   const refreshInFlightRef = useRef(false);
   const activeColumnResize = useRef<{
     key: BuildColumnKey;
     startX: number;
     startWidth: number;
   } | null>(null);
-
-  const replaceBuilds = (items: TeamBuild[]) => {
-    const sorted = sortBuilds(items);
-    buildsRef.current = sorted;
-    setBuilds(sorted);
-  };
 
   const refresh = async (background = false) => {
     if (refreshInFlightRef.current) return;
@@ -106,7 +98,7 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
       setNotice("");
     }
     try {
-      replaceBuilds(await onList());
+      await onList();
       if (background) setError("");
     } catch (refreshError) {
       setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
@@ -120,23 +112,13 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
     if (isOpen) void refresh();
   }, [isOpen]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const intervalID = window.setInterval(() => {
-      if (buildsRef.current.some(build => activeStatuses.has(build.status.toLowerCase()))) {
-        void refresh(true);
-      }
-    }, 1500);
-    return () => window.clearInterval(intervalID);
-  }, [isOpen]);
-
   const filteredBuilds = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return builds.filter(build => {
       const status = build.status.toLowerCase();
       if (statusFilter !== "all" && status !== statusFilter) return false;
       if (!normalizedQuery) return true;
-      return [build.id, build.profile, build.artifact_name || "", build.error || "", build.status]
+      return [build.id, build.profile, build.builder || "", build.artifact_name || "", build.error || "", build.status]
         .some(value => value.toLowerCase().includes(normalizedQuery));
     });
   }, [builds, query, statusFilter]);
@@ -213,7 +195,6 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
     setNotice("");
     try {
       const deleted = await onDelete(build.id);
-      replaceBuilds(buildsRef.current.filter(item => item.id !== deleted.id));
       setNotice(`Build ${deleted.id} deleted.`);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : String(deleteError));
@@ -241,7 +222,7 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
               type="search"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              placeholder="Search ID, profile, artifact or error"
+              placeholder="Search ID, profile, builder, artifact or error"
               aria-label="Search builds"
               className="min-w-64 flex-1 rounded border border-[#444] bg-[#17181A] px-3 py-1.5 text-gray-200 outline-none transition placeholder:text-gray-600 focus:border-violet-400"
             />
@@ -269,7 +250,7 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
 
           <div className="mb-2 flex min-h-4 items-center justify-between text-[10px] text-gray-500">
             <span>Showing {filteredBuilds.length} of {builds.length}</span>
-            {hasActiveBuilds && <span className="text-violet-300">Auto-refreshing active builds every 1.5 seconds</span>}
+            {hasActiveBuilds && <span className="text-violet-300">Following live TeamServer build events</span>}
           </div>
 
           {error && <p className="mb-3 rounded border border-red-900/70 bg-red-950/30 p-2 text-red-300">{error}</p>}
@@ -305,6 +286,7 @@ export const BuildManager: React.FC<BuildManagerProps> = ({
                         {build.error && <span title={build.error} className="mt-1 block truncate text-[10px] text-red-300">{build.error}</span>}
                       </td>
                       <td title={build.profile} className="truncate px-3 py-2.5 text-gray-200">{build.profile}</td>
+                      <td title={build.builder} className="truncate px-3 py-2.5 text-gray-300">{build.builder || "—"}</td>
                       <td title={build.artifact_name} className="select-text truncate px-3 py-2.5 font-mono text-gray-300">{build.artifact_name || "—"}</td>
                       <td title={build.created_at} className="truncate px-3 py-2.5 text-gray-400">{formatDate(build.created_at)}</td>
                       <td title={build.completed_at} className="truncate px-3 py-2.5 text-gray-400">{formatDate(build.completed_at)}</td>

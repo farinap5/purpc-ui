@@ -10,18 +10,32 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AuthenticationPage } from "./components/AuthenticationPage";
 import { isImageFileName, isSecretFileName } from "./utils/loot";
 import {
+  isBuildStateEvent,
+  normalizeBuildOutput,
+  normalizePayloadBuilders,
+  reducePayloadBuilderEvent,
+  retainBuildOutput,
+  sortTeamBuilds,
+  upsertTeamBuild
+} from "./utils/teamBuildFlow";
+import {
   TeamBuild,
+  TeamBuildCreateRequest,
+  TeamBuildOutput,
   TeamCommand,
   TeamCommandExecuteReply,
   TeamEnvelope,
+  TeamEventCursor,
   TeamEvents,
   TeamListener,
   TeamLoot,
   TeamLootGetReply,
   TeamOperations,
+  TeamPayloadBuilder,
   TeamProfile,
   TeamProfileUpdateKey,
   TeamScript,
+  TeamSessionOutput,
   TeamServerClient,
   TeamSession,
   TeamSnapshot,
@@ -32,7 +46,10 @@ import {
 } from "./api/teamApi";
 
 const MAX_EVENT_MONITOR_EVENTS = 1000;
+const MAX_EVENT_MONITOR_CAPTURE_BYTES = 1 << 20;
 const MAX_CONSOLE_LOGS = 1000;
+const MAX_CONSOLE_LOG_CHARACTERS = 512 << 10;
+const MAX_CONSOLE_MESSAGE_CHARACTERS = 64 << 10;
 const USER_STATUS_EVENTS = new Set<string>([
   TeamEvents.userLogin,
   TeamEvents.userLogout,
@@ -49,6 +66,7 @@ const upsertTeamUser = (users: TeamUser[], user: TeamUser) => sortTeamUsers([
   ...users.filter(item => item.uuid !== user.uuid),
   user
 ]);
+
 
 const redactSensitiveTraffic = (raw: string) => {
   const redact = (value: unknown): unknown => {
@@ -73,9 +91,23 @@ const createWebSocketSystemEvent = (action: string, address: string): Packet => 
   direction: "SYSTEM",
   type: "WebSocket",
   size: 0,
+  capturedSize: action.length + address.length + 1,
   encryption: "N/A",
   payload: `${action} ${address}`
 });
+
+const retainPackets = (packets: Packet[]) => {
+  const retained: Packet[] = [];
+  let capturedBytes = 0;
+  for (const packet of packets) {
+    if (retained.length >= MAX_EVENT_MONITOR_EVENTS) break;
+    const packetBytes = packet.capturedSize ?? packet.payload.length;
+    if (retained.length > 0 && capturedBytes + packetBytes > MAX_EVENT_MONITOR_CAPTURE_BYTES) break;
+    retained.push(packet);
+    capturedBytes += packetBytes;
+  }
+  return retained;
+};
 
 const mapTeamSession = (session: TeamSession, note = ""): Session => {
   const lastSeen = Date.parse(session.last_seen);
@@ -143,17 +175,6 @@ const mapTeamCommand = (command: TeamCommand): Command => ({
   description: command.description
 });
 
-const decodeTaskResponse = (encoded?: string) => {
-  if (!encoded) return { text: "", bytes: 0 };
-  try {
-    const binary = atob(encoded);
-    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
-    return { text: new TextDecoder().decode(bytes), bytes: bytes.byteLength };
-  } catch {
-    return { text: encoded, bytes: new TextEncoder().encode(encoded).byteLength };
-  }
-};
-
 const formatTaskTimestamp = (value?: string) => {
   const date = value ? new Date(value) : new Date();
   const safeDate = Number.isNaN(date.getTime()) ? new Date() : date;
@@ -168,6 +189,82 @@ const formatTaskTimestamp = (value?: string) => {
   return `${month}/${day}/${year} ${String(hour).padStart(2, "0")}:${minute}:${second} ${period}`;
 };
 
+const truncateConsoleMessage = (message: string) => {
+  if (message.length <= MAX_CONSOLE_MESSAGE_CHARACTERS) return message;
+  const omitted = message.length - MAX_CONSOLE_MESSAGE_CHARACTERS;
+  return `${message.slice(0, MAX_CONSOLE_MESSAGE_CHARACTERS)}\n[… ${omitted.toLocaleString()} characters omitted]`;
+};
+
+const retainConsoleLogs = (logs: ConsoleLog[]) => {
+  const retained: ConsoleLog[] = [];
+  let characters = 0;
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    if (retained.length >= MAX_CONSOLE_LOGS) break;
+    const log = logs[index];
+    const message = truncateConsoleMessage(log.message);
+    if (retained.length > 0 && characters + message.length > MAX_CONSOLE_LOG_CHARACTERS) break;
+    retained.push(message === log.message ? log : { ...log, message });
+    characters += message.length;
+  }
+  return retained.reverse();
+};
+
+const logsForServerEvent = (event: TeamEnvelope): ConsoleLog[] => {
+  const eventTime = event.time ? new Date(event.time).toLocaleString() : new Date().toLocaleString();
+  const taskTime = formatTaskTimestamp(event.time);
+  const sequence = event.sequence ? ` #${event.sequence}` : "";
+  const idPrefix = `${event.sequence || Date.now()}-${event.type}`;
+  const userMessage = event.type === TeamEvents.userMessage ? event.data as TeamUserMessage : null;
+  const eventUser = event.type.startsWith("evt.user.") && !userMessage ? event.data as TeamUser : null;
+  const logs: ConsoleLog[] = [];
+
+  if (event.type !== "evt.session.checkin") {
+    logs.push({
+      id: `event-${idPrefix}`,
+      timestamp: eventTime,
+      type: event.type === "evt.listener.failed" ? "error" : userMessage ? "input" : "system",
+      message: userMessage?.user
+        ? `<${userMessage.user}> ${userMessage.message}`
+        : eventUser?.name
+        ? `${event.type}${sequence}: ${eventUser.name} (${eventUser.uuid}) · ${eventUser.connected ? "connected" : "offline"}`
+        : `${event.type}${sequence}`
+    });
+  }
+
+  if (event.type === "evt.task.created") {
+    const task = event.data as TeamTask;
+    logs.push({ id: `log-${idPrefix}-created`, timestamp: formatTaskTimestamp(task.registered || event.time), type: "system", message: `task create: ${task.id}`, sessionId: task.session });
+  } else if (event.type === "evt.task.dispatched") {
+    const task = event.data as TeamTask;
+    logs.push({ id: `log-${idPrefix}-dispatched`, timestamp: formatTaskTimestamp(task.last_sent || event.time), type: "system", message: `task collected: ${task.id}`, sessionId: task.session });
+  } else if (event.type === "evt.task.completed") {
+    const task = event.data as TeamTask;
+    logs.push({ id: `log-${idPrefix}-completed`, timestamp: formatTaskTimestamp(task.response_time || event.time), type: "system", message: `task complete: ${task.id}`, sessionId: task.session });
+  } else if (event.type === TeamEvents.sessionOutput) {
+    const output = event.data as TeamSessionOutput;
+    if (output?.session && typeof output.message === "string") {
+      const source = output.source ? ` · ${output.source}` : "";
+      const task = output.task_id ? `task output: ${output.task_id}${source}\n` : output.source ? `${output.source}\n` : "";
+      logs.push({ id: `log-${idPrefix}-output`, timestamp: taskTime, type: "output", message: `${task}${output.message}`, sessionId: output.session });
+    }
+  } else if (event.type === "evt.script.output") {
+    const output = event.data as { message?: string };
+    if (output.message) logs.push({ id: `log-${idPrefix}-script`, timestamp: taskTime, type: "output", message: output.message });
+  } else if (event.type === TeamEvents.buildOutput) {
+    const output = normalizeBuildOutput(event);
+    if (output) {
+      logs.push({
+        id: `log-${idPrefix}-build-output`,
+        timestamp: taskTime,
+        type: "output",
+        message: `build output: ${output.build_id} · ${output.profile} · ${output.builder}\n${output.message}`
+      });
+    }
+  }
+
+  return logs;
+};
+
 export default function App() {
   // Master states
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -176,6 +273,9 @@ export default function App() {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
   const [profiles, setProfiles] = useState<TeamProfile[]>([]);
+  const [payloadBuilders, setPayloadBuilders] = useState<TeamPayloadBuilder[]>([]);
+  const [builds, setBuilds] = useState<TeamBuild[]>([]);
+  const [buildOutputByID, setBuildOutputByID] = useState<Record<string, TeamBuildOutput[]>>({});
   const [users, setUsers] = useState<TeamUser[]>([]);
   const [eventLogs, setEventLogs] = useState<ConsoleLog[]>([]);
   const [packets, setPackets] = useState<Packet[]>([]);
@@ -189,6 +289,7 @@ export default function App() {
   const [currentLag, setCurrentLag] = useState(0);
   const clientRef = useRef<TeamServerClient | null>(null);
   const sessionNotesRef = useRef<Record<string, string>>({});
+  const eventCursorByServerRef = useRef<Record<string, TeamEventCursor>>({});
 
   // Tabbed system state
   const [tabs, setTabs] = useState<ConsoleTab[]>([
@@ -273,12 +374,12 @@ export default function App() {
     handleAddTab("session", `${session.user}@${session.computer} (${session.id})`, session.id);
   };
 
-  const appendLog = (log: ConsoleLog) => {
-    setEventLogs(previous => {
-      const next = [...previous, log];
-      return next.length > MAX_CONSOLE_LOGS ? next.slice(-MAX_CONSOLE_LOGS) : next;
-    });
+  const appendLogs = (logs: ConsoleLog[]) => {
+    if (logs.length === 0) return;
+    setEventLogs(previous => retainConsoleLogs([...previous, ...logs]));
   };
+
+  const appendLog = (log: ConsoleLog) => appendLogs([log]);
 
   const addLog = (type: ConsoleLog["type"], message: string, sessionId?: string, timestamp = new Date().toLocaleString()) => {
     appendLog({
@@ -298,12 +399,51 @@ export default function App() {
     setActiveTabId(current => current === id ? "event_log" : current);
   };
 
+  const applyBuildEvent = (event: TeamEnvelope) => {
+    if (event.type === TeamEvents.buildOutput) {
+      const output = normalizeBuildOutput(event);
+      if (!output) return;
+      setBuildOutputByID(previous => ({
+        ...previous,
+        [output.build_id]: retainBuildOutput([...(previous[output.build_id] || []), output])
+      }));
+      return;
+    }
+    if (event.type === TeamEvents.buildDeleted) {
+      const deleted = event.data as (Partial<TeamBuild> & { build_id?: string }) | undefined;
+      const deletedID = deleted?.id || deleted?.build_id;
+      if (!deletedID) return;
+      setBuilds(previous => previous.filter(build => build.id !== deletedID));
+      setBuildOutputByID(previous => {
+        if (!previous[deletedID]) return previous;
+        const next = { ...previous };
+        delete next[deletedID];
+        return next;
+      });
+      return;
+    }
+    if (isBuildStateEvent(event.type)) {
+      const build = event.data as TeamBuild;
+      if (build?.id) setBuilds(previous => upsertTeamBuild(previous, build));
+    }
+  };
+
+  const applyPayloadBuilderEvent = (event: TeamEnvelope) => {
+    if (
+      event.type === TeamEvents.payloadBuilderRegistered ||
+      event.type === TeamEvents.payloadBuilderUnregistered
+    ) {
+      setPayloadBuilders(previous => reducePayloadBuilderEvent(previous, event));
+    }
+  };
+
   const applySnapshot = (snapshot: TeamSnapshot) => {
     setSessions(snapshot.sessions.map(session => mapTeamSession(session, sessionNotesRef.current[session.name] || "")));
     setListeners(snapshot.listeners.map(mapTeamListener));
     setScripts(snapshot.scripts.map(mapTeamScript));
     setCommands(snapshot.commands.map(mapTeamCommand));
     setProfiles(snapshot.profiles);
+    setBuilds(sortTeamBuilds(snapshot.builds || []));
     setUsers(sortTeamUsers(snapshot.users || []));
     setSelectedSessionId(current => {
       if (current && snapshot.sessions.some(session => session.name === current)) return current;
@@ -313,31 +453,20 @@ export default function App() {
 
   const refreshServerState = async (client = clientRef.current) => {
     if (!client?.connected) return;
-    const [snapshot, serverLoot] = await Promise.all([
+    const [snapshot, serverLoot, serverPayloadBuilders] = await Promise.all([
       client.request<TeamSnapshot>(TeamOperations.systemSnapshot, {}),
-      client.request<TeamLoot[]>(TeamOperations.lootList, {})
+      client.request<TeamLoot[]>(TeamOperations.lootList, {}),
+      client.request<unknown>(TeamOperations.payloadBuilderList, {})
     ]);
     applySnapshot(snapshot);
     setLoots(serverLoot.map(mapTeamLoot));
+    setPayloadBuilders(normalizePayloadBuilders(serverPayloadBuilders));
   };
 
-  const handleServerEvent = async (event: TeamEnvelope, client: TeamServerClient, refreshResources = true) => {
-    const eventTime = event.time ? new Date(event.time).toLocaleString() : new Date().toLocaleString();
-    const sequence = event.sequence ? ` #${event.sequence}` : "";
-    const userMessage = event.type === TeamEvents.userMessage ? event.data as TeamUserMessage : null;
-    const eventUser = event.type.startsWith("evt.user.") && !userMessage ? event.data as TeamUser : null;
-    if (event.type !== "evt.session.checkin") {
-      appendLog({
-        id: `event-${event.sequence || Date.now()}-${event.type}`,
-        timestamp: eventTime,
-        type: event.type === "evt.listener.failed" ? "error" : userMessage ? "input" : "system",
-        message: userMessage?.user
-          ? `<${userMessage.user}> ${userMessage.message}`
-          : eventUser?.name
-          ? `${event.type}${sequence}: ${eventUser.name} (${eventUser.uuid}) · ${eventUser.connected ? "connected" : "offline"}`
-          : `${event.type}${sequence}`
-      });
-    }
+  const handleServerEvent = async (event: TeamEnvelope, client: TeamServerClient) => {
+    appendLogs(logsForServerEvent(event));
+    applyBuildEvent(event);
+    applyPayloadBuilderEvent(event);
 
     if (USER_STATUS_EVENTS.has(event.type)) {
       const user = event.data as TeamUser;
@@ -367,27 +496,12 @@ export default function App() {
         if (existingIndex === -1) return [...previous, mappedSession];
         return previous.map((session, index) => index === existingIndex ? mappedSession : session);
       });
-    } else if (event.type === "evt.task.created") {
-      const task = event.data as TeamTask;
-      addLog("system", `task create: ${task.id}`, task.session, formatTaskTimestamp(task.registered || event.time));
-    } else if (event.type === "evt.task.dispatched") {
-      const task = event.data as TeamTask;
-      addLog("system", `task collected: ${task.id}`, task.session, formatTaskTimestamp(task.last_sent || event.time));
-    } else if (event.type === "evt.task.completed") {
-      const task = event.data as TeamTask;
-      const response = decodeTaskResponse(task.response);
-      const message = `task response: ${task.id} ${response.bytes} bytes${response.text ? `\n${response.text}` : ""}`;
-      addLog("output", message, task.session, formatTaskTimestamp(task.response_time || event.time));
-    } else if (event.type === "evt.script.output") {
-      const output = event.data as { message?: string };
-      if (output.message) addLog("output", output.message);
     }
 
-    if (!refreshResources) return;
     try {
       if (
         event.type.startsWith("evt.listener.") ||
-        (event.type.startsWith("evt.session.") && !["evt.session.checkin", "evt.session.deleted"].includes(event.type)) ||
+        (event.type.startsWith("evt.session.") && !["evt.session.checkin", "evt.session.deleted", TeamEvents.sessionOutput].includes(event.type)) ||
         event.type.startsWith("evt.script.")
       ) {
         const snapshot = await client.request<TeamSnapshot>(TeamOperations.systemSnapshot, {});
@@ -406,32 +520,52 @@ export default function App() {
 
     let client: TeamServerClient;
     let initializing = true;
+    const initializationEvents: TeamEnvelope[] = [];
+    const serverKey = settings.serverAddress.replace(/\/$/, "");
     client = new TeamServerClient({
       serverAddress: settings.serverAddress,
       token: settings.token,
-      onTraffic: (direction, raw) => {
+      initialEventCursor: eventCursorByServerRef.current[serverKey],
+      onEventCursorChange: cursor => {
+        if (clientRef.current === client) eventCursorByServerRef.current[serverKey] = cursor;
+      },
+      onReplay: events => {
+        appendLogs(events.flatMap(logsForServerEvent));
+        events.forEach(event => {
+          applyBuildEvent(event);
+          applyPayloadBuilderEvent(event);
+        });
+      },
+      onReplayWarning: message => addLog("error", message),
+      onTraffic: (direction, traffic) => {
+        const payload = redactSensitiveTraffic(traffic.payload);
         const packet: Packet = {
           id: `frame-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           timestamp: new Date().toLocaleTimeString(),
           direction,
           type: "WebSocket",
-          size: new TextEncoder().encode(raw).byteLength,
+          size: traffic.byte_length,
+          sizeIsLowerBound: traffic.byte_length_is_lower_bound,
+          capturedSize: new TextEncoder().encode(payload).byteLength,
           encryption: settings.serverAddress.startsWith("https:") ? "TLS" : "None",
-          payload: redactSensitiveTraffic(raw)
+          payload
         };
-        setPackets(previous => [packet, ...previous].slice(0, MAX_EVENT_MONITOR_EVENTS));
+        setPackets(previous => retainPackets([packet, ...previous]));
       },
-      onEvent: event => void handleServerEvent(event, client, !initializing),
+      onEvent: event => {
+        if (initializing) initializationEvents.push(event);
+        else void handleServerEvent(event, client);
+      },
       onConnectionChange: (connected, reason) => {
         if (clientRef.current !== client) return;
         setIsWsConnected(connected);
         if (!connected && reason && reason !== "Operator disconnected") {
           addLog("system", `${TeamEvents.userLogout}: ${settings.username} · local connection closed`);
           addLog("error", `TeamServer connection lost: ${reason}`);
-          setPackets(previous => [
+          setPackets(previous => retainPackets([
             createWebSocketSystemEvent("CLOSE", settings.serverAddress),
             ...previous
-          ].slice(0, MAX_EVENT_MONITOR_EVENTS));
+          ]));
         }
       }
     });
@@ -440,23 +574,36 @@ export default function App() {
     const startedAt = performance.now();
     try {
       const { hello, snapshot } = await client.initialize();
-      initializing = false;
       if (hello.protocol !== 1) {
         throw new Error(`Unsupported teamserver protocol version ${hello.protocol}.`);
       }
-      const serverLoot = await client.request<TeamLoot[]>(TeamOperations.lootList, {});
+      const [serverLoot, serverPayloadBuilders] = await Promise.all([
+        client.request<TeamLoot[]>(TeamOperations.lootList, {}),
+        client.request<unknown>(TeamOperations.payloadBuilderList, {})
+      ]);
       setCurrentLag(Math.max(0, Math.round(performance.now() - startedAt)));
       applySnapshot(snapshot);
       setLoots(serverLoot.map(mapTeamLoot));
+      setPayloadBuilders(normalizePayloadBuilders(serverPayloadBuilders));
+      appendLogs(initializationEvents.flatMap(logsForServerEvent));
+      initializationEvents.forEach(event => {
+        applyBuildEvent(event);
+        applyPayloadBuilderEvent(event);
+      });
+      const stateAdvancedDuringInitialization = initializationEvents.some(
+        event => !event.sequence || event.sequence > snapshot.event_sequence
+      );
+      initializing = false;
+      if (stateAdvancedDuringInitialization) await refreshServerState(client);
       setOperatorName(settings.username);
       setAuthToken(settings.token);
       setServerAddress(settings.serverAddress);
       setIsAuthenticated(true);
       setIsWsConnected(true);
-      setPackets(previous => [
+      setPackets(previous => retainPackets([
         createWebSocketSystemEvent("OPEN", settings.serverAddress),
         ...previous
-      ].slice(0, MAX_EVENT_MONITOR_EVENTS));
+      ]));
       addLog("system", `*** ${settings.username} connected to ${settings.serverAddress} · server ${hello.server_id} (${hello.server_version})`);
     } catch (error) {
       if (clientRef.current === client) clientRef.current = null;
@@ -662,24 +809,38 @@ export default function App() {
     return requireTeamClient().request<TeamUserMessage>(TeamOperations.userMessage, { message });
   };
 
-  const handleCreateBuild = async (profile: string) => {
+  const handleListPayloadBuilders = async () => {
+    const listed = await requireTeamClient().request<unknown>(TeamOperations.payloadBuilderList, {});
+    const normalized = normalizePayloadBuilders(listed);
+    setPayloadBuilders(normalized);
+    return normalized;
+  };
+
+  const handleCreateBuild = async (profile: string, builder: string) => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
-    return client.request<TeamBuild>(TeamOperations.buildCreate, { profile });
+    const request: TeamBuildCreateRequest = { profile, builder };
+    const created = await client.request<TeamBuild>(TeamOperations.buildCreate, request);
+    setBuilds(previous => upsertTeamBuild(previous, created));
+    return created;
   };
 
-  const handleGetBuild = async (id: string) => {
-    const client = clientRef.current;
-    if (!client) throw new Error("Not connected to the teamserver.");
-    return client.request<TeamBuild>(TeamOperations.buildGet, { name: id });
+  const handleListBuilds = async () => {
+    const listed = await requireTeamClient().request<TeamBuild[]>(TeamOperations.buildList, {});
+    setBuilds(sortTeamBuilds(listed));
+    return listed;
   };
 
-  const handleListBuilds = () => {
-    return requireTeamClient().request<TeamBuild[]>(TeamOperations.buildList, {});
-  };
-
-  const handleDeleteBuild = (id: string) => {
-    return requireTeamClient().request<TeamBuild>(TeamOperations.buildDelete, { id });
+  const handleDeleteBuild = async (id: string) => {
+    const deleted = await requireTeamClient().request<TeamBuild>(TeamOperations.buildDelete, { id });
+    setBuilds(previous => previous.filter(build => build.id !== (deleted.id || id)));
+    setBuildOutputByID(previous => {
+      if (!previous[id]) return previous;
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+    return deleted;
   };
 
   const handleDownloadBuild = async (build: TeamBuild) => {
@@ -705,7 +866,7 @@ export default function App() {
     clientRef.current = null;
     setIsWsConnected(false);
     addLog("system", `${TeamEvents.userLogout}: ${operatorName} · local connection closed`);
-    setPackets(previous => [createWebSocketSystemEvent("CLOSE", serverAddress), ...previous].slice(0, MAX_EVENT_MONITOR_EVENTS));
+    setPackets(previous => retainPackets([createWebSocketSystemEvent("CLOSE", serverAddress), ...previous]));
   };
 
   const handleConnect = () => {
@@ -864,14 +1025,18 @@ export default function App() {
       {/* 3. MODAL: Advanced compilation/generator of C2 session agents */}
       <PayloadGenerator 
         profiles={profiles}
+        payloadBuilders={payloadBuilders}
+        builds={builds}
+        buildOutputByID={buildOutputByID}
         isOpen={isPayloadOpen}
         onClose={() => setIsPayloadOpen(false)}
+        onRefreshPayloadBuilders={handleListPayloadBuilders}
         onCreateBuild={handleCreateBuild}
-        onGetBuild={handleGetBuild}
         onDownloadBuild={handleDownloadBuild}
       />
 
       <BuildManager
+        builds={builds}
         isOpen={isBuildManagerOpen}
         onClose={() => setIsBuildManagerOpen(false)}
         onList={handleListBuilds}

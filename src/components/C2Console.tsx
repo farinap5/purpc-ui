@@ -20,6 +20,8 @@ interface CommandExecutionResult {
   message?: string;
 }
 
+type ScriptAction = "refresh" | "load" | "unload" | "reload";
+
 interface C2ConsoleProps {
   tabs: ConsoleTab[];
   activeTabId: string;
@@ -103,9 +105,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
   // Script editor state
   const [selectedScriptId, setSelectedScriptId] = useState<string>("");
-  const [scriptPath, setScriptPath] = useState("");
+  const [newScriptPath, setNewScriptPath] = useState("");
   const [scriptActionError, setScriptActionError] = useState("");
-  const [isScriptActionPending, setIsScriptActionPending] = useState(false);
+  const [pendingScriptAction, setPendingScriptAction] = useState<ScriptAction | null>(null);
+  const isScriptActionPending = pendingScriptAction !== null;
 
   // Loot manager state
   const [lootActionId, setLootActionId] = useState("");
@@ -129,7 +132,6 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     if (!scripts.some(script => script.id === selectedScriptId)) {
       const nextScript = scripts[0];
       setSelectedScriptId(nextScript?.id || "");
-      setScriptPath(nextScript?.id || "");
     }
   }, [selectedScriptId, scripts]);
 
@@ -138,10 +140,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     if (tab?.type !== "scripts") return;
 
     setScriptActionError("");
-    setIsScriptActionPending(true);
+    setPendingScriptAction("refresh");
     void onRefreshScripts()
       .catch(error => setScriptActionError(error instanceof Error ? error.message : String(error)))
-      .finally(() => setIsScriptActionPending(false));
+      .finally(() => setPendingScriptAction(null));
   }, [activeTabId]);
 
   useEffect(() => {
@@ -1103,40 +1105,43 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
 
     const refreshScripts = async () => {
       setScriptActionError("");
-      setIsScriptActionPending(true);
+      setPendingScriptAction("refresh");
       try {
         await onRefreshScripts();
       } catch (error) {
         setScriptActionError(error instanceof Error ? error.message : String(error));
       } finally {
-        setIsScriptActionPending(false);
+        setPendingScriptAction(null);
       }
     };
 
-    const runScriptAction = async (action: "load" | "unload") => {
-      const path = scriptPath.trim();
+    const runScriptAction = async (action: Exclude<ScriptAction, "refresh">) => {
+      const path = action === "load" ? newScriptPath.trim() : selectedScript?.id || "";
       if (!path) {
-        setScriptActionError("Enter a server-side Lua script path.");
+        setScriptActionError(action === "load" ? "Enter a server-side Lua script path." : "Select a loaded script first.");
         return;
       }
 
       setScriptActionError("");
-      setIsScriptActionPending(true);
+      setPendingScriptAction(action);
       try {
         if (action === "load") {
           const loaded = await onLoadScript(path);
           setSelectedScriptId(loaded.id);
-          setScriptPath(loaded.id);
-        } else {
+          setNewScriptPath("");
+        } else if (action === "unload") {
           await onUnloadScript(path);
           setSelectedScriptId("");
-          setScriptPath("");
+        } else {
+          await onUnloadScript(path);
+          const reloaded = await onLoadScript(path);
+          setSelectedScriptId(reloaded.id);
         }
         await onRefreshScripts();
       } catch (error) {
         setScriptActionError(error instanceof Error ? error.message : String(error));
       } finally {
-        setIsScriptActionPending(false);
+        setPendingScriptAction(null);
       }
     };
 
@@ -1145,16 +1150,15 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
         <div className="flex w-full flex-col md:w-72">
           <div className="mb-2 flex items-center justify-between border-b border-[#333] pb-2">
             <h3 className="flex items-center text-xs font-bold uppercase text-gray-200">
-              <FileCode className="mr-1 h-3.5 w-3.5 text-gray-400" />
               <span>Loaded Scripts</span>
             </h3>
             <button
               type="button"
               onClick={() => void refreshScripts()}
-              disabled={isScriptActionPending}
+              disabled={isScriptActionPending || !isWsConnected}
               className="cursor-pointer rounded border border-[#444] px-2 py-1 text-[10px] text-gray-400 hover:bg-[#333] hover:text-white disabled:cursor-wait disabled:opacity-50"
             >
-              Refresh
+              {pendingScriptAction === "refresh" ? "Refreshing…" : "Refresh"}
             </button>
           </div>
 
@@ -1165,7 +1169,6 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                 type="button"
                 onClick={() => {
                   setSelectedScriptId(scr.id);
-                  setScriptPath(scr.id);
                   setScriptActionError("");
                 }}
                 className={`w-full cursor-pointer rounded border p-2 text-left ${
@@ -1184,7 +1187,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
           </div>
         </div>
 
-        <div className="flex flex-1 flex-col gap-3 rounded border border-[#333333] bg-[#222222] p-3">
+        <div className="flex min-w-0 flex-1 flex-col gap-3 rounded border border-[#333333] bg-[#222222] p-3">
           <form
             onSubmit={event => {
               event.preventDefault();
@@ -1192,49 +1195,84 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
             }}
             className="rounded border border-[#333] bg-[#1a1b1d] p-3"
           >
-            <label htmlFor="server-script-path" className="mb-1 block text-[11px] text-gray-300">Server-side Lua script path</label>
-            <input
-              id="server-script-path"
-              type="text"
-              value={scriptPath}
-              onChange={event => {
-                setScriptPath(event.target.value);
-                setScriptActionError("");
-              }}
-              placeholder="/opt/purplecommand/scripts/example.lua"
-              className="w-full rounded border border-[#444] bg-[#141414] px-3 py-2 font-mono text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400"
-            />
-            <p className="mt-1 text-[10px] text-gray-600">The path is resolved and read by the TeamServer.</p>
-            <div className="mt-3 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => void runScriptAction("unload")}
-                disabled={isScriptActionPending || !scriptPath.trim()}
-                className="cursor-pointer rounded border border-red-900/70 bg-red-950/30 px-3 py-1.5 text-red-300 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Unload
-              </button>
+            <div className="mb-3 flex items-start gap-2 border-b border-[#333] pb-2.5">
+              <span className="rounded bg-[#385d8a]/25 p-1.5 text-blue-300">
+                <Plus className="h-3.5 w-3.5" />
+              </span>
+              <div>
+                <h3 className="text-xs font-bold text-gray-100">Load New Script</h3>
+                <p className="mt-0.5 text-[10px] text-gray-500">Register a Lua script that is available on the TeamServer.</p>
+              </div>
+            </div>
+
+            <label htmlFor="new-server-script-path" className="mb-1 block text-[11px] text-gray-300">Server-side path</label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                id="new-server-script-path"
+                type="text"
+                value={newScriptPath}
+                onChange={event => {
+                  setNewScriptPath(event.target.value);
+                  setScriptActionError("");
+                }}
+                placeholder="/opt/purplecommand/scripts/example.lua"
+                autoComplete="off"
+                spellCheck={false}
+                disabled={isScriptActionPending}
+                aria-describedby="new-server-script-path-help"
+                className="min-w-0 flex-1 rounded border border-[#444] bg-[#141414] px-3 py-2 font-mono text-xs text-white outline-none transition placeholder:text-gray-700 focus:border-violet-400 disabled:cursor-not-allowed disabled:opacity-60"
+              />
               <button
                 type="submit"
-                disabled={isScriptActionPending || !scriptPath.trim()}
-                className="cursor-pointer rounded bg-[#385d8a] px-3 py-1.5 font-bold text-white hover:bg-[#486d9a] disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={isScriptActionPending || !isWsConnected || !newScriptPath.trim()}
+                className="flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded bg-[#385d8a] px-4 py-2 text-xs font-bold text-white transition hover:bg-[#486d9a] disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {isScriptActionPending ? "Working…" : "Load"}
+                <Plus className="h-3.5 w-3.5" />
+                {pendingScriptAction === "load" ? "Loading…" : "Load Script"}
               </button>
             </div>
+            <p id="new-server-script-path-help" className="mt-1.5 text-[10px] text-gray-600">
+              Enter an absolute path readable by the TeamServer process. Script files are not uploaded from this device.
+            </p>
           </form>
 
-          {scriptActionError && <p className="rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{scriptActionError}</p>}
+          {scriptActionError && <p role="alert" className="rounded border border-red-900/70 bg-red-950/30 p-2 text-[10px] text-red-300">{scriptActionError}</p>}
 
           {selectedScript ? (
-            <div className="rounded border border-[#333] bg-[#18191b] p-3 text-[11px]">
-              <div className="font-bold text-gray-200">{selectedScript.name}</div>
-              <div className="mt-1 break-all font-mono text-gray-500">{selectedScript.id}</div>
-              <div className="mt-2 text-gray-400">Status: <span className="text-emerald-400">{selectedScript.status}</span></div>
-              <pre className="mt-3 whitespace-pre-wrap break-all border-t border-[#333] pt-3 font-mono text-[10px] text-gray-500">{selectedScript.content}</pre>
+            <div className="flex min-h-0 flex-1 flex-col rounded border border-[#333] bg-[#18191b] p-3 text-[11px]">
+              <div className="flex flex-col gap-3 border-b border-[#333] pb-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="font-bold text-gray-200">{selectedScript.name}</div>
+                  <div className="mt-1 break-all font-mono text-gray-500">{selectedScript.id}</div>
+                  <div className="mt-2 text-gray-400">Status: <span className="text-emerald-400">{selectedScript.status}</span></div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    title="Unload and load the selected script again"
+                    onClick={() => void runScriptAction("reload")}
+                    disabled={isScriptActionPending || !isWsConnected}
+                    className="flex cursor-pointer items-center gap-1.5 rounded border border-[#486d9a] bg-[#385d8a]/30 px-3 py-1.5 text-blue-200 hover:bg-[#385d8a]/60 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${pendingScriptAction === "reload" ? "animate-spin" : ""}`} />
+                    {pendingScriptAction === "reload" ? "Reloading…" : "Reload"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void runScriptAction("unload")}
+                    disabled={isScriptActionPending || !isWsConnected}
+                    className="cursor-pointer rounded border border-red-900/70 bg-red-950/30 px-3 py-1.5 text-red-300 hover:bg-red-950/60 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {pendingScriptAction === "unload" ? "Unloading…" : "Unload"}
+                  </button>
+                </div>
+              </div>
+              <pre className="mt-3 whitespace-pre-wrap break-all font-mono text-[10px] text-gray-500">{selectedScript.content}</pre>
             </div>
           ) : (
-            <div className="flex min-h-32 flex-1 items-center justify-center rounded border border-dashed border-[#333] text-[11px] text-gray-600">Enter a server path to load a script.</div>
+            <div className="flex min-h-32 flex-1 items-center justify-center rounded border border-dashed border-[#333] px-4 text-center text-[11px] text-gray-600">
+              Load a new script above or select a loaded script to manage it.
+            </div>
           )}
         </div>
       </div>
@@ -1267,7 +1305,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                 <span className="text-gray-500">{pkt.timestamp}</span>
                 <span className="font-bold text-gray-300">{pkt.direction}</span>
                 <span className="text-gray-400">{pkt.type}</span>
-                <span className="text-gray-400">{pkt.size} B</span>
+                <span className="text-gray-400">{pkt.sizeIsLowerBound ? "≥" : ""}{pkt.size} B</span>
                 <span className="text-gray-400">{pkt.encryption}</span>
                 <span className="select-text break-all text-gray-300">{pkt.payload}</span>
               </div>

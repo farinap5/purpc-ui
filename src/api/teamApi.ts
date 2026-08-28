@@ -2,7 +2,10 @@ export const TEAM_API_VERSION = 1;
 export const TEAM_API_SUBPROTOCOL = "purpcmd.v1";
 export const TEAM_API_BROWSER_AUTH_PREFIX = "purpcmd.auth.";
 export const MAX_CONTROL_MESSAGE_BYTES = 1 << 20;
-const COLD_START_REPLAY_LIMIT = 1000;
+export const MAX_TRAFFIC_PREVIEW_BYTES = 16 << 10;
+const REPLAY_PAGE_EVENT_LIMIT = 50;
+const MAX_REPLAY_EVENTS = 1000;
+const MAX_REPLAY_TRANSFER_BYTES = 4 << 20;
 
 export const TeamOperations = {
   systemHello: "ask.system.hello",
@@ -24,6 +27,7 @@ export const TeamOperations = {
   profileCreate: "ask.profile.create",
   profileUpdate: "ask.profile.update",
   profileDelete: "ask.profile.delete",
+  payloadBuilderList: "ask.payload-builder.list",
   buildCreate: "ask.build.create",
   buildGet: "ask.build.get",
   buildList: "ask.build.list",
@@ -37,6 +41,15 @@ export const TeamOperations = {
 } as const;
 
 export const TeamEvents = {
+  sessionOutput: "evt.session.output",
+  payloadBuilderRegistered: "evt.payload-builder.registered",
+  payloadBuilderUnregistered: "evt.payload-builder.unregistered",
+  buildQueued: "evt.build.queued",
+  buildStarted: "evt.build.started",
+  buildOutput: "evt.build.output",
+  buildCompleted: "evt.build.completed",
+  buildFailed: "evt.build.failed",
+  buildDeleted: "evt.build.deleted",
   userLogin: "evt.user.login",
   userLogout: "evt.user.logout",
   userCreated: "evt.user.created",
@@ -142,7 +155,6 @@ export interface TeamProfile {
   definition_created_at?: string;
   definition_updated_at?: string;
   output: string;
-  template: string;
   public_key: string;
 }
 
@@ -157,7 +169,6 @@ export type TeamProfileUpdateKey =
   | "OTS_CLEAR"
   | "OTS_EXPIRES_AT"
   | "OUTPUT"
-  | "TEMPLATE"
   | "PUBLICKEY";
 
 export interface TeamProfileUpdateRequest {
@@ -169,12 +180,34 @@ export interface TeamProfileUpdateRequest {
 export interface TeamBuild {
   id: string;
   profile: string;
+  builder: string;
   status: string;
   artifact_name?: string;
   error?: string;
   created_at: string;
   completed_at?: string;
   download_url?: string;
+}
+
+export interface TeamBuildCreateRequest {
+  profile: string;
+  builder: string;
+}
+
+export interface TeamBuildOutput {
+  build_id: string;
+  profile: string;
+  builder: string;
+  message: string;
+  sequence?: number;
+  time?: string;
+}
+
+export interface TeamPayloadBuilder {
+  name: string;
+  description?: string;
+  type?: string;
+  source?: string;
 }
 
 export interface TeamUser {
@@ -201,6 +234,7 @@ export interface TeamSnapshot {
   sessions: TeamSession[];
   scripts: TeamScript[];
   profiles: TeamProfile[];
+  builds: TeamBuild[];
   commands: TeamCommand[];
   users: TeamUser[];
   event_sequence: number;
@@ -218,6 +252,13 @@ export interface TeamTask {
   response?: string;
 }
 
+export interface TeamSessionOutput {
+  session: string;
+  task_id: string;
+  message: string;
+  source: string;
+}
+
 export interface TeamCommandExecuteReply {
   task_ids?: string[];
   message?: string;
@@ -230,12 +271,28 @@ export interface TeamEventRecord {
   data: unknown;
 }
 
+export interface TeamEventCursor {
+  server_id: string;
+  sequence: number;
+}
+
+export interface TeamTrafficRecord {
+  payload: string;
+  byte_length: number;
+  byte_length_is_lower_bound: boolean;
+  truncated: boolean;
+}
+
 export interface TeamServerClientConfig {
   serverAddress: string;
   token: string;
   timeoutMs?: number;
+  initialEventCursor?: TeamEventCursor;
   onEvent?: (event: TeamEnvelope) => void;
-  onTraffic?: (direction: "INBOUND" | "OUTBOUND", raw: string) => void;
+  onReplay?: (events: TeamEnvelope[]) => void;
+  onReplayWarning?: (message: string) => void;
+  onEventCursorChange?: (cursor: TeamEventCursor) => void;
+  onTraffic?: (direction: "INBOUND" | "OUTBOUND", record: TeamTrafficRecord) => void;
   onConnectionChange?: (connected: boolean, reason?: string) => void;
 }
 
@@ -243,6 +300,7 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
   timeout: number;
+  operation: string;
 }
 
 export class TeamApiError extends Error {
@@ -254,6 +312,13 @@ export class TeamApiError extends Error {
     this.name = "TeamApiError";
     this.code = payload.code;
     this.retryable = Boolean(payload.retryable);
+  }
+}
+
+export class TeamMessageTooLargeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TeamMessageTooLargeError";
   }
 }
 
@@ -283,12 +348,40 @@ const websocketEndpoint = (serverAddress: string) => {
   return endpoint.toString();
 };
 
+const measureControlMessage = (raw: string) => {
+  if (raw.length > MAX_CONTROL_MESSAGE_BYTES) {
+    return { byteLength: raw.length, byteLengthIsLowerBound: true };
+  }
+  return {
+    byteLength: new TextEncoder().encode(raw).byteLength,
+    byteLengthIsLowerBound: false
+  };
+};
+
+const createTrafficRecord = (raw: string): TeamTrafficRecord => {
+  const { byteLength, byteLengthIsLowerBound } = measureControlMessage(raw);
+  const truncated = byteLength > MAX_TRAFFIC_PREVIEW_BYTES;
+  const size = `${byteLengthIsLowerBound ? "at least " : ""}${byteLength.toLocaleString()} bytes`;
+  return {
+    payload: truncated ? `[payload omitted: ${size}; preview limit is ${MAX_TRAFFIC_PREVIEW_BYTES.toLocaleString()} bytes]` : raw,
+    byte_length: byteLength,
+    byte_length_is_lower_bound: byteLengthIsLowerBound,
+    truncated
+  };
+};
+
+const extractEnvelopeID = (raw: string) => raw
+  .slice(0, 4096)
+  .match(/"id"\s*:\s*"([^"\\]{1,128})"/)?.[1];
+
 export class TeamServerClient {
   private readonly config: Required<Pick<TeamServerClientConfig, "serverAddress" | "token" | "timeoutMs">> & TeamServerClientConfig;
   private readonly clientID = createID();
   private readonly pending = new Map<string, PendingRequest>();
   private socket: WebSocket | null = null;
-  private lastSequence = 0;
+  private lastSequence: number;
+  private serverID: string;
+  private replayResponseBytes = 0;
   private manuallyClosed = false;
 
   constructor(config: TeamServerClientConfig) {
@@ -298,6 +391,8 @@ export class TeamServerClient {
       token: config.token,
       timeoutMs: config.timeoutMs ?? 15_000
     };
+    this.lastSequence = Math.max(0, config.initialEventCursor?.sequence || 0);
+    this.serverID = config.initialEventCursor?.server_id || "";
   }
 
   get connected() {
@@ -346,7 +441,7 @@ export class TeamServerClient {
     await this.connect();
     const hello = await this.hello();
     const snapshot = await this.request<TeamSnapshot>(TeamOperations.systemSnapshot, {});
-    this.lastSequence = Math.max(this.lastSequence, snapshot.event_sequence || 0);
+    this.advanceEventSequence(snapshot.event_sequence || 0);
     return { hello, snapshot };
   }
 
@@ -361,23 +456,14 @@ export class TeamServerClient {
       data
     };
     const raw = JSON.stringify(envelope);
-    if (new TextEncoder().encode(raw).byteLength > MAX_CONTROL_MESSAGE_BYTES) {
+    if (measureControlMessage(raw).byteLength > MAX_CONTROL_MESSAGE_BYTES) {
       throw new Error("Teamserver control message exceeds the 1 MiB protocol limit.");
     }
 
-    let lastError: Error | null = null;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await this.connect();
-        return await this.requestOnce<T>(id, operation, raw);
-      } catch (error) {
-        const requestError = error instanceof Error ? error : new Error(String(error));
-        if (requestError instanceof TeamApiError) throw requestError;
-        lastError = requestError;
-        if (attempt === 0) this.disconnectCurrent();
-      }
+    if (!this.connected) {
+      throw new Error("Not connected to the teamserver. Reconnect to restore event continuity before retrying the request.");
     }
-    throw lastError ?? new Error(`Teamserver request failed: ${operation}`);
+    return this.requestOnce<T>(id, operation, raw);
   }
 
   async download(remotePath: string): Promise<Blob> {
@@ -415,9 +501,10 @@ export class TeamServerClient {
       this.pending.set(id, {
         resolve: value => resolve(value as T),
         reject,
-        timeout
+        timeout,
+        operation
       });
-      this.config.onTraffic?.("OUTBOUND", raw);
+      this.captureTraffic("OUTBOUND", raw);
       try {
         socket.send(raw);
       } catch (error) {
@@ -446,42 +533,92 @@ export class TeamServerClient {
   }
 
   private async hello(): Promise<TeamHelloReply> {
-    const replayFrom = this.lastSequence;
+    const requestedReplayFrom = this.lastSequence;
     const hello = await this.request<TeamHelloReply>(TeamOperations.systemHello, {
-      last_event_sequence: replayFrom
+      last_event_sequence: requestedReplayFrom
     });
-    if (!hello.resync_required) return hello;
+    const sameServer = !this.serverID || this.serverID === hello.server_id;
+    this.serverID = hello.server_id;
+    if (!sameServer || requestedReplayFrom > hello.event_sequence) {
+      this.lastSequence = 0;
+    }
+    this.publishEventCursor();
 
-    // A cold dashboard still needs recent connection events, but replaying an
-    // unbounded event database can block a busy browser. Restore at most the
-    // latest monitor-sized window; the snapshot remains the state baseline.
-    let cursor = replayFrom === 0
-      ? Math.max(0, hello.event_sequence - COLD_START_REPLAY_LIMIT)
-      : replayFrom;
+    const replayFrom = this.lastSequence;
+    // A cold dashboard has no continuity to restore. The snapshot requested
+    // immediately after hello is its authoritative state baseline.
+    if (!hello.resync_required || replayFrom === 0) return hello;
+
+    let cursor = replayFrom;
+    let replayedRecords = 0;
+    this.replayResponseBytes = 0;
     while (cursor < hello.event_sequence) {
-      const records = await this.request<TeamEventRecord[]>(TeamOperations.eventReplay, {
-        after: cursor,
-        limit: 1000
-      });
+      let records: TeamEventRecord[];
+      try {
+        records = await this.request<TeamEventRecord[]>(TeamOperations.eventReplay, {
+          after: cursor,
+          limit: REPLAY_PAGE_EVENT_LIMIT
+        });
+      } catch (error) {
+        if (!(error instanceof TeamMessageTooLargeError)) throw error;
+        this.config.onReplayWarning?.(`${error.message} Continuing with a fresh snapshot; some transient events may be omitted.`);
+        break;
+      }
       if (records.length === 0) break;
-      for (const record of records) {
-        this.acceptEvent({
+
+      const previousCursor = cursor;
+      const replayEvents: TeamEnvelope[] = [];
+      const remainingRecords = Math.max(0, MAX_REPLAY_EVENTS - replayedRecords);
+      const boundedRecords = records.slice(0, remainingRecords);
+      for (const record of boundedRecords) {
+        cursor = Math.max(cursor, record.sequence);
+        if (record.sequence > 0 && record.sequence <= this.lastSequence) continue;
+        const envelope: TeamEnvelope = {
           version: TEAM_API_VERSION,
           type: record.type,
           sequence: record.sequence,
           time: record.time,
           ok: true,
           data: record.data
-        });
-        cursor = record.sequence;
+        };
+        this.advanceEventSequence(record.sequence);
+        replayEvents.push(envelope);
       }
-      if (records.length < 1000) break;
+      replayedRecords += boundedRecords.length;
+      if (replayEvents.length > 0) {
+        if (this.config.onReplay) this.config.onReplay(replayEvents);
+        else replayEvents.forEach(event => this.config.onEvent?.(event));
+      }
+      if (replayedRecords >= MAX_REPLAY_EVENTS || this.replayResponseBytes >= MAX_REPLAY_TRANSFER_BYTES) {
+        this.config.onReplayWarning?.(
+          `Warm replay reached its safety budget (${replayedRecords.toLocaleString()} events, ${this.replayResponseBytes.toLocaleString()} bytes). Continuing with the snapshot.`
+        );
+        break;
+      }
+      if (cursor <= previousCursor || records.length < REPLAY_PAGE_EVENT_LIMIT) break;
     }
     return hello;
   }
 
   private handleMessage(raw: string): void {
-    this.config.onTraffic?.("INBOUND", raw);
+    const traffic = this.captureTraffic("INBOUND", raw);
+    if (traffic.byte_length > MAX_CONTROL_MESSAGE_BYTES) {
+      const size = `${traffic.byte_length_is_lower_bound ? "at least " : ""}${traffic.byte_length.toLocaleString()} bytes`;
+      const error = new TeamMessageTooLargeError(`TeamServer response is ${size}, exceeding the 1 MiB control-message limit.`);
+      const id = extractEnvelopeID(raw);
+      const pending = id ? this.pending.get(id) : undefined;
+      if (id && pending) {
+        window.clearTimeout(pending.timeout);
+        this.pending.delete(id);
+        pending.reject(error);
+      } else {
+        this.rejectPending(error);
+        this.disconnectCurrent();
+        this.config.onConnectionChange?.(false, error.message);
+      }
+      return;
+    }
+
     let envelope: TeamEnvelope;
     try {
       envelope = JSON.parse(raw) as TeamEnvelope;
@@ -505,14 +642,34 @@ export class TeamServerClient {
       pending.reject(new Error(`Teamserver returned an unsuccessful reply for ${envelope.type}.`));
       return;
     }
+    if (pending.operation === TeamOperations.eventReplay) {
+      this.replayResponseBytes += traffic.byte_length;
+    }
     pending.resolve(envelope.data);
   }
 
   private acceptEvent(envelope: TeamEnvelope): void {
     const sequence = envelope.sequence ?? 0;
     if (sequence > 0 && sequence <= this.lastSequence) return;
-    if (sequence > 0) this.lastSequence = sequence;
+    if (sequence > 0) this.advanceEventSequence(sequence);
     this.config.onEvent?.(envelope);
+  }
+
+  private captureTraffic(direction: "INBOUND" | "OUTBOUND", raw: string): TeamTrafficRecord {
+    const record = createTrafficRecord(raw);
+    this.config.onTraffic?.(direction, record);
+    return record;
+  }
+
+  private advanceEventSequence(sequence: number): void {
+    if (sequence <= this.lastSequence) return;
+    this.lastSequence = sequence;
+    this.publishEventCursor();
+  }
+
+  private publishEventCursor(): void {
+    if (!this.serverID) return;
+    this.config.onEventCursorChange?.({ server_id: this.serverID, sequence: this.lastSequence });
   }
 
   private handleClose(socket: WebSocket, code: number, reason: string): void {
