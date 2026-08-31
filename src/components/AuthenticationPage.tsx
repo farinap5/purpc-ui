@@ -6,7 +6,6 @@ import {
   CompactFormRow,
   CompactInput,
   DesktopWindow,
-  StatusBar,
   WindowTitleBar
 } from "./desktop";
 
@@ -126,7 +125,6 @@ export function AuthenticationPage({ initialSettings, onConnect }: Authenticatio
             </CompactButton>
           </div>
         </form>
-        <StatusBar>Credentials remain in memory for this application session only.</StatusBar>
       </DesktopWindow>
     </main>
   );
