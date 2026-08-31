@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { TeamProfile, TeamProfileUpdateKey } from "../api/teamApi";
+import { generateRandomOTS } from "../utils/randomSecret";
 import {
   CompactButton,
   CompactCheckbox,
@@ -477,9 +478,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     htmlFor="profile-ots"
                     hint="Existing secret values are never returned by the TeamServer."
                   >
+                    <div className="inline-control-row">
                       <CompactInput
                         id="profile-ots"
-                        type="password"
+                        type="text"
                         value={otsDraft}
                         onChange={event => {
                           setOTSDraft(event.target.value);
@@ -488,6 +490,18 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                         autoComplete="new-password"
                         placeholder={form.ots_configured ? "Leave blank to keep current OTS" : "Optional"}
                       />
+                      <CompactButton
+                        type="button"
+                        variant="secondary"
+                        aria-label="Generate a random 16-character one-time secret"
+                        onClick={() => {
+                          setOTSDraft(generateRandomOTS());
+                          setClearOTS(false);
+                        }}
+                      >
+                        Random OTS
+                      </CompactButton>
+                    </div>
                   </CompactFormRow>
 
                   <CompactFormRow label="OTS expires at (UTC)" htmlFor="profile-ots-expires" hint="Clear the value to remove expiration.">
