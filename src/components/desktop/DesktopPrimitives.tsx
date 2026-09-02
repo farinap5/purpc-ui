@@ -107,9 +107,19 @@ export const CompactButton = forwardRef<HTMLButtonElement, CompactButtonProps>(f
   return <button ref={ref} className={cn("compact-button", `compact-button--${variant}`, className)} {...props} />;
 });
 
-export const CompactIconButton = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
-  function CompactIconButton({ className, ...props }, ref) {
-    return <button ref={ref} className={cn("compact-icon-button", className)} {...props} />;
+interface CompactIconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: CompactButtonVariant;
+}
+
+export const CompactIconButton = forwardRef<HTMLButtonElement, CompactIconButtonProps>(
+  function CompactIconButton({ className, variant = "default", ...props }, ref) {
+    return (
+      <button
+        ref={ref}
+        className={cn("compact-icon-button", `compact-button--${variant}`, className)}
+        {...props}
+      />
+    );
   }
 );
 

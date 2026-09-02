@@ -27,7 +27,9 @@ interface ToolbarProps {
   onTriggerPayloadModal: () => void;
   onTriggerBuildManager: () => void;
   onTriggerProfileModal: () => void;
+  onTriggerListenerModal: () => void;
   onTriggerSettingsModal: () => void;
+  onTriggerAboutModal: () => void;
 }
 
 interface MenuItem {
@@ -62,7 +64,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
   onTriggerPayloadModal,
   onTriggerBuildManager,
   onTriggerProfileModal,
-  onTriggerSettingsModal
+  onTriggerListenerModal,
+  onTriggerSettingsModal,
+  onTriggerAboutModal
 }) => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
@@ -89,13 +93,14 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
     "Administration": [
       { label: "Manage Users", action: () => onAddTab("users", "User Management") }
     ],
-    "Site Management": [
+    "Server": [
+      { label: "Listener", action: onTriggerListenerModal, disabled: !isWsConnected },
       { label: "Manage Web Servers", action: () => alert("HTTP/S web management portal.") },
       { label: "Hosted Files", action: () => alert("Upload files to payload server.") }
     ],
     "Reporting": [],
     "Help": [
-      { label: "About PurpleCommand", action: () => alert("PurpleCommand C2 Dashboard") }
+      { label: "About PurpleCommand", action: onTriggerAboutModal }
     ]
   };
 

@@ -438,8 +438,7 @@ svg.lucide {
   color: var(--danger);
 }
 
-.console-data-panel,
-.listener-grid-panel {
+.console-data-panel {
   display: flex;
   height: 100%;
   flex-direction: column;
@@ -480,35 +479,6 @@ svg.lucide {
 
 .session-status.is-lost {
   color: var(--warning);
-}
-
-.listener-split {
-  display: grid;
-  height: 100%;
-  min-width: 760px;
-  grid-template-columns: minmax(500px, 1fr) 310px;
-  gap: 5px;
-  overflow: auto;
-  padding: 5px;
-}
-
-.listener-form-panel {
-  align-self: start;
-}
-
-.listener-form {
-  display: grid;
-  gap: 8px;
-  padding: 8px;
-}
-
-.listener-form-row {
-  grid-template-columns: 96px minmax(0, 1fr);
-}
-
-.listener-form > .compact-button {
-  min-width: 112px;
-  justify-self: center;
 }
 
 .desktop-window,
@@ -599,6 +569,86 @@ svg.lucide {
   border-top: 1px solid var(--border);
   background: var(--surface-1);
   padding: 6px 10px;
+}
+
+.about-modal .desktop-modal-content {
+  padding: 8px;
+}
+
+.about-modal-layout {
+  display: grid;
+  min-height: 255px;
+  grid-template-columns: 205px minmax(0, 1fr);
+}
+
+.about-modal-artwork {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--border);
+  background: var(--console-bg);
+  padding: 18px;
+}
+
+.about-modal-artwork img {
+  display: block;
+  width: 100%;
+  max-width: 170px;
+  height: auto;
+}
+
+.about-modal-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px 24px 18px;
+}
+
+.about-modal-copy h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.about-modal-copy p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.about-modal-copy header p {
+  margin-top: 5px;
+  color: var(--text);
+}
+
+.about-modal-details {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.about-modal-details div {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.about-modal-details dt {
+  color: var(--text-dim);
+}
+
+.about-modal-details dd {
+  margin: 0;
+  color: var(--accent-hover);
+}
+
+.about-modal-copy .about-modal-copyright {
+  margin-top: auto;
+  color: var(--text-dim);
 }
 
 .compact-button,
@@ -1735,6 +1785,29 @@ svg.lucide {
   .desktop-modal-backdrop {
     align-items: flex-start;
     overflow: auto;
+  }
+
+  .about-modal-layout {
+    grid-template-columns: 150px minmax(0, 1fr);
+  }
+
+  .about-modal-copy {
+    padding: 18px;
+  }
+}
+
+@media (max-width: 520px) {
+  .about-modal-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .about-modal-artwork {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .about-modal-artwork img {
+    max-width: 120px;
   }
 }
 

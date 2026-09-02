@@ -42,6 +42,16 @@ export interface ConnectionSettings {
   serverAddress: string;
 }
 
+export type ListenerProtocol = "http" | "https";
+
+export interface ListenerConfiguration {
+  name: string;
+  protocol: ListenerProtocol;
+  host: string;
+  port: number;
+  persistent: boolean;
+}
+
 export interface Listener {
   id: string;
   name: string;

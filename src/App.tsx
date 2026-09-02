@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Session, Listener, Loot, Script, ConsoleLog, Packet, ConnectionSettings, Command, ConsoleTab, ConsoleTabType } from "./types";
+import { Session, Listener, ListenerConfiguration as ListenerConfigurationValues, Loot, Script, ConsoleLog, Packet, ConnectionSettings, Command, ConsoleTab, ConsoleTabType } from "./types";
 import { C2Toolbar } from "./components/C2Toolbar";
 import { C2SessionTable } from "./components/C2SessionTable";
 import { C2Console } from "./components/C2Console";
@@ -8,6 +8,8 @@ import { BuildManager } from "./components/BuildManager";
 import { ProfileManager } from "./components/ProfileManager";
 import { SettingsModal } from "./components/SettingsModal";
 import { AuthenticationPage } from "./components/AuthenticationPage";
+import { ListenerConfiguration } from "./components/ListenerConfiguration";
+import { AboutModal } from "./components/AboutModal";
 import { isImageFileName, isSecretFileName } from "./utils/loot";
 import {
   isBuildStateEvent,
@@ -134,7 +136,7 @@ const mapTeamSession = (session: TeamSession, note = ""): Session => {
 const mapTeamListener = (listener: TeamListener): Listener => ({
   id: listener.name,
   name: listener.name,
-  payloadType: "Session HTTP",
+  payloadType: listener.protocol?.toLowerCase() === "https" ? "Session HTTPS" : "Session HTTP",
   host: listener.host,
   port: Number.parseInt(listener.port, 10) || 0,
   status: listener.running ? "Active" : "Stopped",
@@ -303,6 +305,8 @@ export default function App() {
   const [isBuildManagerOpen, setIsBuildManagerOpen] = useState(false);
   const [isProfileManagerOpen, setIsProfileManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isListenerConfigurationOpen, setIsListenerConfigurationOpen] = useState(false);
+  const [isAboutOpen, setIsAboutOpen] = useState(false);
 
   // Workspace split-panel state
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -476,6 +480,13 @@ export default function App() {
       if (user?.uuid || user?.name) {
         setUsers(previous => previous.filter(item => item.uuid !== user.uuid && item.name !== user.name));
       }
+    } else if (event.type === TeamEvents.listenerDeleted) {
+      const deletedName = typeof event.data === "string"
+        ? event.data
+        : (event.data as { name?: string } | undefined)?.name;
+      if (deletedName) {
+        setListeners(previous => previous.filter(listener => listener.name !== deletedName));
+      }
     } else if (event.type === "evt.loot.created") {
       const createdLoot = mapTeamLoot(event.data as TeamLoot);
       setLoots(previous => [...previous.filter(item => item.id !== createdLoot.id), createdLoot]);
@@ -613,16 +624,18 @@ export default function App() {
     }
   };
 
-  const handleAddListener = async (newListener: Omit<Listener, "id" | "status">) => {
+  const handleAddListener = async (configuration: ListenerConfigurationValues) => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
     const listener = await client.request<TeamListener>(TeamOperations.listenerCreate, {
-      name: newListener.name,
-      host: newListener.host,
-      port: String(newListener.port),
-      persistent: newListener.persistent ?? false
+      name: configuration.name,
+      protocol: configuration.protocol,
+      host: configuration.host,
+      port: String(configuration.port),
+      persistent: configuration.persistent
     });
-    setListeners(previous => [...previous.filter(item => item.name !== listener.name), mapTeamListener(listener)]);
+    const configuredListener = listener.protocol ? listener : { ...listener, protocol: configuration.protocol };
+    setListeners(previous => [...previous.filter(item => item.name !== listener.name), mapTeamListener(configuredListener)]);
   };
 
   const handleListenerState = async (name: string, start: boolean) => {
@@ -630,6 +643,12 @@ export default function App() {
     if (!client) throw new Error("Not connected to the teamserver.");
     const listener = await client.request<TeamListener>(start ? TeamOperations.listenerStart : TeamOperations.listenerStop, { name });
     setListeners(previous => previous.map(item => item.name === name ? mapTeamListener(listener) : item));
+  };
+
+  const handleDeleteListener = async (name: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    await client.request<unknown>(TeamOperations.listenerDelete, { name });
   };
 
   const handleRefreshScripts = async () => {
@@ -903,7 +922,9 @@ export default function App() {
         onTriggerPayloadModal={() => setIsPayloadOpen(true)}
         onTriggerBuildManager={() => setIsBuildManagerOpen(true)}
         onTriggerProfileModal={() => setIsProfileManagerOpen(true)}
+        onTriggerListenerModal={() => setIsListenerConfigurationOpen(true)}
         onTriggerSettingsModal={() => setIsSettingsOpen(true)}
+        onTriggerAboutModal={() => setIsAboutOpen(true)}
       />
 
       {/* 2. Interactive Workspace layout */}
@@ -992,8 +1013,8 @@ export default function App() {
             eventLogs={eventLogs}
             packets={packets}
             users={users}
-            onAddListener={handleAddListener}
             onSetListenerState={handleListenerState}
+            onDeleteListener={handleDeleteListener}
             onRefreshScripts={handleRefreshScripts}
             onLoadScript={handleLoadScript}
             onUnloadScript={handleUnloadScript}
@@ -1058,6 +1079,18 @@ export default function App() {
         isWsConnected={isWsConnected}
         onReconnect={handleReconnect}
         onResetAll={handleResetAll}
+      />
+
+      <ListenerConfiguration
+        isOpen={isListenerConfigurationOpen}
+        isConnected={isWsConnected}
+        onClose={() => setIsListenerConfigurationOpen(false)}
+        onCreate={handleAddListener}
+      />
+
+      <AboutModal
+        isOpen={isAboutOpen}
+        onClose={() => setIsAboutOpen(false)}
       />
 
     </div>

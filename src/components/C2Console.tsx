@@ -14,12 +14,9 @@ import { createLootContentPreview, imageMimeType, LootContentPreview } from "../
 import { UserManager } from "./UserManager";
 import {
   CompactButton,
-  CompactCheckbox,
-  CompactFormGrid,
   CompactFormRow,
   CompactIconButton,
   CompactInput,
-  CompactNumberInput,
   CompactScrollbar,
   DataGrid,
   DesktopPanel,
@@ -50,8 +47,8 @@ interface C2ConsoleProps {
   packets: Packet[];
   users: TeamUser[];
   
-  onAddListener: (newListener: Omit<Listener, "id" | "status">) => Promise<void>;
   onSetListenerState: (name: string, start: boolean) => Promise<void>;
+  onDeleteListener: (name: string) => Promise<void>;
   onRefreshScripts: () => Promise<Script[]>;
   onLoadScript: (path: string) => Promise<Script>;
   onUnloadScript: (path: string) => Promise<void>;
@@ -84,8 +81,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   eventLogs,
   packets,
   users,
-  onAddListener,
   onSetListenerState,
+  onDeleteListener,
   onRefreshScripts,
   onLoadScript,
   onUnloadScript,
@@ -108,13 +105,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const [history, setHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [listenerActionError, setListenerActionError] = useState("");
-  const [isCreatingListener, setIsCreatingListener] = useState(false);
-  
-  // Listener forms
-  const [newListenerName, setNewListenerName] = useState("");
-  const [newListenerHost, setNewListenerHost] = useState("127.0.0.1");
-  const [newListenerPort, setNewListenerPort] = useState(443);
-  const [newListenerPersistent, setNewListenerPersistent] = useState(false);
+  const [listenerDeletePending, setListenerDeletePending] = useState("");
 
   // Script editor state
   const [selectedScriptId, setSelectedScriptId] = useState<string>("");
@@ -147,6 +138,12 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
       setSelectedScriptId(nextScript?.id || "");
     }
   }, [selectedScriptId, scripts]);
+
+  useEffect(() => {
+    if (listenerDeletePending && !listeners.some(listener => listener.name === listenerDeletePending)) {
+      setListenerDeletePending("");
+    }
+  }, [listenerDeletePending, listeners]);
 
   useEffect(() => {
     const tab = tabs.find(item => item.id === activeTabId);
@@ -439,32 +436,6 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     }
   };
 
-  const handleCreateListener = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newListenerName.trim()) {
-      alert("Please provide a listener name.");
-      return;
-    }
-    setListenerActionError("");
-    setIsCreatingListener(true);
-    try {
-      await onAddListener({
-        name: newListenerName.trim(),
-        payloadType: "Session HTTP",
-        host: newListenerHost.trim(),
-        port: newListenerPort,
-        encryption: "None (Plaintext)",
-        persistent: newListenerPersistent,
-        associations: 0
-      });
-      setNewListenerName("");
-    } catch (error) {
-      setListenerActionError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setIsCreatingListener(false);
-    }
-  };
-
   // 1. Team event log
   const renderEventLog = () => {
     return (
@@ -618,110 +589,78 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     );
   };
 
+  const deleteListener = async (name: string) => {
+    setListenerActionError("");
+    setListenerDeletePending(name);
+    try {
+      await onDeleteListener(name);
+    } catch (error) {
+      setListenerDeletePending("");
+      setListenerActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   // 3. Listeners Management
   const renderListeners = () => {
     return (
-      <div className="listener-split">
-        <DesktopPanel className="listener-grid-panel">
-          <PanelHeader>TeamServer Listeners</PanelHeader>
+      <DesktopPanel className="console-data-panel">
+          <PanelHeader actions={<span className="panel-counter">{listeners.length} total</span>}>TeamServer Listeners</PanelHeader>
+          {listenerActionError && (
+            <p role="alert" className="desktop-alert desktop-alert--error panel-alert">{listenerActionError}</p>
+          )}
           <CompactScrollbar className="console-grid-scroll">
             <DataGrid aria-label="TeamServer listeners" className="listener-grid">
               <thead>
                 <tr>
-                  <th>Name</th><th>Host Bind</th><th>Port</th><th>Persistent</th><th>Sessions</th><th>Status</th><th className="text-right">Actions</th>
+                  <th>Name</th><th>Protocol</th><th>Host Bind</th><th>Port</th><th>Persistent</th><th>Sessions</th><th>Status</th><th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {listeners.map(l => (
                   <tr key={l.id}>
-                    <td className="text-white">{l.name}</td><td>{l.host}</td><td>{l.port}</td>
+                    <td className="text-white">{l.name}</td>
+                    <td>{l.payloadType === "Session HTTPS" ? "HTTPS" : "HTTP"}</td>
+                    <td>{l.host}</td><td>{l.port}</td>
                     <td>{l.persistent ? "Yes" : "No"}</td><td>{l.associations ?? 0}</td>
                     <td><span className={l.status === "Active" ? "listener-status is-active" : "listener-status"}>{l.status}</span>
                     </td>
                     <td className="text-right">
-                      <CompactButton
-                        onClick={() => {
-                          setListenerActionError("");
-                          void onSetListenerState(l.name, l.status !== "Active")
-                            .catch(error => setListenerActionError(error instanceof Error ? error.message : String(error)));
-                        }}
-                        variant={l.status === "Active" ? "danger" : "secondary"}
-                      >
-                        {l.status === "Active" ? "Stop" : "Start"}
-                      </CompactButton>
+                      <div className="grid-actions">
+                        <CompactButton
+                          type="button"
+                          disabled={!isWsConnected || listenerDeletePending === l.name}
+                          onClick={() => {
+                            setListenerActionError("");
+                            void onSetListenerState(l.name, l.status !== "Active")
+                              .catch(error => setListenerActionError(error instanceof Error ? error.message : String(error)));
+                          }}
+                          variant={l.status === "Active" ? "danger" : "secondary"}
+                        >
+                          {l.status === "Active" ? "Stop" : "Start"}
+                        </CompactButton>
+                        <CompactIconButton
+                          type="button"
+                          variant="danger"
+                          disabled={!isWsConnected || Boolean(listenerDeletePending)}
+                          onClick={() => void deleteListener(l.name)}
+                          aria-label={listenerDeletePending === l.name
+                            ? `Waiting for deletion confirmation for listener ${l.name}`
+                            : `Delete listener ${l.name}`}
+                          title={listenerDeletePending === l.name ? "Waiting for deletion confirmation" : "Delete listener"}
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </CompactIconButton>
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {listeners.length === 0 && (
-                  <tr><td colSpan={7} className="empty-grid-cell">No listeners are registered.</td></tr>
+                  <tr><td colSpan={8} className="empty-grid-cell">No listeners are registered.</td></tr>
                 )}
               </tbody>
             </DataGrid>
           </CompactScrollbar>
-        </DesktopPanel>
-
-        <DesktopPanel className="listener-form-panel">
-          <PanelHeader>New Listener</PanelHeader>
-
-          <form onSubmit={handleCreateListener} className="listener-form">
-            <CompactFormGrid>
-            <CompactFormRow label="Listener Name" htmlFor="listener-name" required className="listener-form-row">
-              <CompactInput
-                id="listener-name"
-                type="text"
-                required
-                placeholder="HTTPS_Secure"
-                value={newListenerName}
-                onChange={(e) => setNewListenerName(e.target.value)}
-              />
-            </CompactFormRow>
-
-            <CompactFormRow label="Host Bind" htmlFor="listener-host" required className="listener-form-row">
-              <CompactInput
-                id="listener-host"
-                type="text"
-                required
-                value={newListenerHost}
-                onChange={(e) => setNewListenerHost(e.target.value)}
-              />
-            </CompactFormRow>
-
-            <CompactFormRow label="Port" htmlFor="listener-port" required className="listener-form-row">
-              <CompactNumberInput
-                id="listener-port"
-                min="1"
-                max="65535"
-                required
-                value={newListenerPort}
-                onChange={(e) => setNewListenerPort(parseInt(e.target.value))}
-              />
-            </CompactFormRow>
-
-            <CompactFormRow label="Persistence" className="listener-form-row">
-            <label className="compact-check-label">
-              <CompactCheckbox
-                checked={newListenerPersistent}
-                onChange={(e) => setNewListenerPersistent(e.target.checked)}
-              />
-              Across TeamServer restarts
-            </label>
-            </CompactFormRow>
-            </CompactFormGrid>
-
-            {listenerActionError && (
-              <p role="alert" className="desktop-alert desktop-alert--error">{listenerActionError}</p>
-            )}
-
-            <CompactButton
-              type="submit"
-              disabled={isCreatingListener || !isWsConnected}
-              variant="primary"
-            >
-              {isCreatingListener ? "Creating…" : "Create Listener"}
-            </CompactButton>
-          </form>
-        </DesktopPanel>
-      </div>
+      </DesktopPanel>
     );
   };
 

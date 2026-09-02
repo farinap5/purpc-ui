@@ -13,6 +13,7 @@ export const TeamOperations = {
   listenerCreate: "ask.listener.create",
   listenerStart: "ask.listener.start",
   listenerStop: "ask.listener.stop",
+  listenerDelete: "ask.listener.delete",
   sessionTerminate: "ask.session.terminate",
   sessionDelete: "ask.session.delete",
   commandExecute: "ask.command.execute",
@@ -42,6 +43,7 @@ export const TeamOperations = {
 
 export const TeamEvents = {
   sessionOutput: "evt.session.output",
+  listenerDeleted: "evt.listener.deleted",
   payloadBuilderRegistered: "evt.payload-builder.registered",
   payloadBuilderUnregistered: "evt.payload-builder.unregistered",
   buildQueued: "evt.build.queued",
@@ -92,6 +94,7 @@ export interface TeamListener {
   running: boolean;
   persistent: boolean;
   associations: number;
+  protocol?: string;
 }
 
 export interface TeamSession {
