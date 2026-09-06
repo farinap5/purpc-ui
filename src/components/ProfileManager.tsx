@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { TeamProfile, TeamProfileUpdateKey } from "../api/teamApi";
+import type { Listener } from "../types";
+import {
+  getProfileListenerCompatibility,
+  type ListenerLHostSnapshot
+} from "../utils/listenerEndpoint";
 import { generateRandomOTS } from "../utils/randomSecret";
 import {
   CompactButton,
@@ -8,6 +13,7 @@ import {
   CompactFormRow,
   CompactInput,
   CompactScrollbar,
+  CompactSelect,
   CompactTextArea,
   DesktopModal,
   DesktopPanel,
@@ -16,17 +22,21 @@ import {
 
 interface ProfileManagerProps {
   isOpen: boolean;
+  listeners: Listener[];
+  serverProfiles: TeamProfile[];
   onClose: () => void;
   onList: () => Promise<TeamProfile[]>;
   onGet: (name: string) => Promise<TeamProfile>;
   onCreate: (profile: TeamProfile) => Promise<TeamProfile>;
   onUpdate: (name: string, key: TeamProfileUpdateKey, value: string) => Promise<TeamProfile>;
+  onSetListener: (name: string, listenerUUID: string) => Promise<TeamProfile>;
   onDelete: (name: string) => Promise<void>;
 }
 
 type EditableProfileKey = Exclude<
   keyof TeamProfile,
   | "name"
+  | "listener_uuid"
   | "os_options"
   | "arch_options"
   | "protocol"
@@ -42,6 +52,7 @@ type EditableProfileKey = Exclude<
 
 const defaultProfile = (): TeamProfile => ({
   name: "",
+  listener_uuid: "",
   type: "impl",
   lhost: "",
   os: "linux",
@@ -72,6 +83,23 @@ const editableFields: Array<{
 
 const sortProfiles = (profiles: TeamProfile[]) => [...profiles].sort((left, right) => left.name.localeCompare(right.name));
 
+const profileRevision = (profile: TeamProfile) => JSON.stringify({
+  listener_uuid: profile.listener_uuid || "",
+  lhost: profile.lhost,
+  type: profile.type,
+  os: profile.os,
+  arch: profile.arch,
+  protocol: profile.protocol,
+  options: profile.options,
+  ots_configured: profile.ots_configured,
+  ots_expires_at: profile.ots_expires_at,
+  ots_used_at: profile.ots_used_at,
+  config_version: profile.config_version,
+  definition_updated_at: profile.definition_updated_at,
+  output: profile.output,
+  public_key: profile.public_key
+});
+
 const nextDuplicateName = (name: string, profiles: TeamProfile[]) => {
   const existingNames = new Set(profiles.map(profile => profile.name));
   const trailingNumber = name.match(/^(.*?)(\d+)$/);
@@ -88,6 +116,7 @@ const normalizeProfile = (profile: TeamProfile): TeamProfile => {
   void _legacyTemplate;
   return {
     ...currentProfile,
+    listener_uuid: profile.listener_uuid || "",
     os_options: profile.os_options?.length ? profile.os_options : [profile.os],
     arch_options: profile.arch_options?.length ? profile.arch_options : [profile.arch],
     protocol: profile.protocol || "generic",
@@ -109,13 +138,19 @@ const fromUTCInputValue = (value: string) => value ? `${value}:00Z` : "";
 
 const formatTimestamp = (value?: string) => value ? new Date(value).toLocaleString() : "Never";
 
+const formatEndpointSource = (source: ListenerLHostSnapshot["source"]) =>
+  source === "advertise+bind" ? "options.advertise + options.bind" : `options.${source}`;
+
 export const ProfileManager: React.FC<ProfileManagerProps> = ({
   isOpen,
+  listeners,
+  serverProfiles,
   onClose,
   onList,
   onGet,
   onCreate,
   onUpdate,
+  onSetListener,
   onDelete
 }) => {
   const [profiles, setProfiles] = useState<TeamProfile[]>([]);
@@ -131,7 +166,6 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
   const [otsDraft, setOTSDraft] = useState("");
   const [clearOTS, setClearOTS] = useState(false);
   const [otsExpiresAt, setOTSExpiresAt] = useState("");
-
   const loadDefinitionDrafts = (profile: TeamProfile) => {
     const normalized = normalizeProfile(profile);
     setForm(normalized);
@@ -199,12 +233,69 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     if (isOpen) void refresh();
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const normalizedProfiles = sortProfiles(serverProfiles.map(normalizeProfile));
+    setProfiles(normalizedProfiles);
+    if (isCreating || isSaving || !original) return;
+
+    const authoritative = normalizedProfiles.find(profile => profile.name === original.name);
+    if (!authoritative) {
+      setSelectedName("");
+      setOriginal(null);
+      setForm(defaultProfile());
+      setNotice(`Profile ${original.name} was deleted.`);
+      return;
+    }
+    if (profileRevision(authoritative) !== profileRevision(original)) {
+      setOriginal(authoritative);
+      loadDefinitionDrafts(authoritative);
+      setNotice(`Profile ${authoritative.name} was refreshed from a TeamServer event.`);
+    }
+  }, [serverProfiles]);
+
   if (!isOpen) return null;
 
   const setField = (property: "name" | EditableProfileKey, value: string) => {
-    setForm(current => ({ ...current, [property]: value }));
+    const detachesListener = property === "lhost" && Boolean(form.listener_uuid);
+    setForm(current => ({
+      ...current,
+      [property]: value,
+      ...(property === "lhost" ? { listener_uuid: "" } : {})
+    }));
+    setError("");
+    setNotice(detachesListener
+      ? "Editing LHOST manually will detach the listener when this profile is saved."
+      : "");
+  };
+
+  const listenerChoices = [...listeners]
+    .sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }))
+    .map(listener => ({ listener, compatibility: getProfileListenerCompatibility(listener) }));
+  const selectedListenerChoice = listenerChoices.find(choice => choice.listener.uuid === form.listener_uuid);
+  const selectedListenerSnapshot = selectedListenerChoice?.compatibility.snapshot || null;
+  const missingAttachedListener = Boolean(form.listener_uuid && !selectedListenerChoice);
+
+  const selectListener = (uuid: string) => {
     setError("");
     setNotice("");
+    if (!uuid) {
+      setForm(current => ({ ...current, listener_uuid: "" }));
+      if (form.listener_uuid) setNotice("The listener will be detached when this profile is saved; its current LHOST will be preserved.");
+      return;
+    }
+    if (form.protocol.trim().toLowerCase() !== "http") {
+      setError("A listener can be attached only to a plain HTTP implant profile.");
+      return;
+    }
+    const choice = listenerChoices.find(item => item.listener.uuid === uuid);
+    if (!choice?.compatibility.compatible || !choice.compatibility.snapshot) {
+      setError(choice?.compatibility.reason || "The selected listener cannot be attached to this profile.");
+      return;
+    }
+    const snapshot = choice.compatibility.snapshot;
+    setForm(current => ({ ...current, listener_uuid: uuid, lhost: snapshot.endpoint }));
+    setNotice(`Listener ${choice.listener.name} will be attached when saved. The TeamServer will materialize its advertised endpoint into LHOST.`);
   };
 
   const validate = () => {
@@ -213,6 +304,9 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     if (!form.os.trim()) return "Operating system is required.";
     if (!form.arch.trim()) return "Architecture is required.";
     if (!form.protocol.trim()) return "Protocol is required.";
+    if (form.listener_uuid && form.protocol.trim().toLowerCase() !== "http") {
+      return "A listener can be attached only to a plain HTTP implant profile.";
+    }
     if (clearOTS && otsDraft !== "") return "Choose either a replacement OTS or Clear OTS, not both.";
     try {
       const options = JSON.parse(optionsText);
@@ -234,8 +328,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     setError("");
     setNotice("");
     try {
+      const listenerUUID = form.listener_uuid;
       const created = await onCreate({
         ...form,
+        listener_uuid: "",
         name: form.name.trim(),
         os_options: Array.from(new Set([...form.os_options, form.os])),
         arch_options: Array.from(new Set([...form.arch_options, form.arch])),
@@ -244,8 +340,19 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
         ots: otsDraft || undefined,
         ots_expires_at: fromUTCInputValue(otsExpiresAt) || undefined
       });
-      await refresh(created.name);
-      setNotice(`Profile ${created.name} created.`);
+      if (listenerUUID) {
+        try {
+          const attached = await onSetListener(created.name, listenerUUID);
+          await refresh(attached.name);
+          setNotice(`Profile ${attached.name} created and attached to its listener.`);
+        } catch (attachError) {
+          await refresh(created.name);
+          setError(`Profile ${created.name} was created, but listener attachment failed: ${attachError instanceof Error ? attachError.message : String(attachError)}`);
+        }
+      } else {
+        await refresh(created.name);
+        setNotice(`Profile ${created.name} created.`);
+      }
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : String(createError));
     } finally {
@@ -261,7 +368,12 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       return;
     }
 
-    const changes = editableFields.filter(field => form[field.property] !== original[field.property]);
+    const listenerChanged = form.listener_uuid !== original.listener_uuid;
+    const listenerNeedsApply = listenerChanged || Boolean(form.listener_uuid && form.lhost !== original.lhost);
+    const changes = editableFields.filter(field =>
+      form[field.property] !== original[field.property] &&
+      !(field.property === "lhost" && Boolean(form.listener_uuid))
+    );
     const parsedOptions = JSON.parse(optionsText) as Record<string, unknown>;
     const protocolChanged = form.protocol.trim() !== original.protocol;
     const optionsChanged = JSON.stringify(parsedOptions) !== JSON.stringify(original.options || {});
@@ -270,7 +382,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     const expiryChanged = expiry !== originalExpiry;
     const otsChanged = otsDraft !== "";
     const clearExistingOTS = clearOTS && original.ots_configured;
-    if (changes.length === 0 && !protocolChanged && !optionsChanged && !expiryChanged && !otsChanged && !clearExistingOTS) {
+    if (changes.length === 0 && !listenerNeedsApply && !protocolChanged && !optionsChanged && !expiryChanged && !otsChanged && !clearExistingOTS) {
       setNotice("No profile changes to save.");
       return;
     }
@@ -288,10 +400,40 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       if (expiryChanged) updated = await onUpdate(original.name, "OTS_EXPIRES_AT", expiry);
       if (clearExistingOTS) updated = await onUpdate(original.name, "OTS_CLEAR", "");
       if (otsChanged) updated = await onUpdate(original.name, "OTS", otsDraft);
+      if (listenerNeedsApply) updated = await onSetListener(original.name, form.listener_uuid);
       await refresh(updated.name);
       setNotice(`Profile ${updated.name} updated.`);
     } catch (updateError) {
       const message = updateError instanceof Error ? updateError.message : String(updateError);
+      await refresh(original.name);
+      setError(message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const refreshAttachedListener = async () => {
+    if (!original?.listener_uuid) return;
+    setIsSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const refreshed = normalizeProfile(await onSetListener(original.name, original.listener_uuid));
+      setProfiles(current => sortProfiles([
+        ...current.filter(profile => profile.name !== refreshed.name),
+        refreshed
+      ]));
+      setOriginal(refreshed);
+      setForm(current => ({
+        ...current,
+        listener_uuid: refreshed.listener_uuid,
+        lhost: refreshed.lhost,
+        config_version: refreshed.config_version,
+        definition_updated_at: refreshed.definition_updated_at
+      }));
+      setNotice(`LHOST refreshed from listener ${selectedListenerChoice?.listener.name || refreshed.listener_uuid}. Existing implants were not changed.`);
+    } catch (refreshError) {
+      const message = refreshError instanceof Error ? refreshError.message : String(refreshError);
       await refresh(original.name);
       setError(message);
     } finally {
@@ -330,8 +472,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     setError("");
     setNotice("");
     try {
+      const listenerUUID = original.listener_uuid;
       const created = await onCreate({
         ...original,
+        listener_uuid: "",
         name: duplicateName,
         os_options: [...original.os_options],
         arch_options: [...original.arch_options],
@@ -344,8 +488,19 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
         definition_created_at: undefined,
         definition_updated_at: undefined
       });
-      await refresh(created.name);
-      setNotice(`Profile ${created.name} created from ${original.name}.`);
+      if (listenerUUID) {
+        try {
+          const attached = await onSetListener(created.name, listenerUUID);
+          await refresh(attached.name);
+          setNotice(`Profile ${attached.name} created from ${original.name} with the same listener attached.`);
+        } catch (attachError) {
+          await refresh(created.name);
+          setError(`Profile ${created.name} was duplicated, but listener attachment failed: ${attachError instanceof Error ? attachError.message : String(attachError)}`);
+        }
+      } else {
+        await refresh(created.name);
+        setNotice(`Profile ${created.name} created from ${original.name}.`);
+      }
     } catch (duplicateError) {
       setError(duplicateError instanceof Error ? duplicateError.message : String(duplicateError));
     } finally {
@@ -426,7 +581,53 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                   />
                 </CompactFormRow>
                 {editableFields.map(field => (
-                  <CompactFormRow key={field.property} label={field.label} htmlFor={`profile-${field.property}`}>
+                  <React.Fragment key={field.property}>
+                  {field.property === "lhost" && (
+                    <CompactFormRow
+                      label="Listener"
+                      htmlFor="profile-lhost-listener"
+                      hint="Optional persistent plain-HTTP listener. Advertisement fields fall back individually to bind fields."
+                    >
+                      <div className="inline-control-row">
+                        <CompactSelect
+                          id="profile-lhost-listener"
+                          value={form.listener_uuid}
+                          onChange={event => selectListener(event.target.value)}
+                          disabled={isSaving}
+                        >
+                          <option value="">No listener — manual LHOST</option>
+                          {missingAttachedListener && (
+                            <option value={form.listener_uuid} disabled>
+                              Attached listener unavailable — {form.listener_uuid}
+                            </option>
+                          )}
+                          {listenerChoices.map(({ listener, compatibility }) => (
+                            <option key={listener.uuid} value={listener.uuid} disabled={!compatibility.compatible}>
+                              {listener.name}{compatibility.snapshot ? ` — ${compatibility.snapshot.endpoint}` : ""}
+                              {!compatibility.compatible ? ` — ${compatibility.reason}` : ""}
+                            </option>
+                          ))}
+                        </CompactSelect>
+                        {!isCreating && original?.listener_uuid && form.listener_uuid === original.listener_uuid && (
+                          <CompactButton
+                            type="button"
+                            variant="secondary"
+                            onClick={() => void refreshAttachedListener()}
+                            disabled={isSaving || isLoading || !selectedListenerChoice?.compatibility.compatible}
+                          >
+                            Refresh LHOST
+                          </CompactButton>
+                        )}
+                      </div>
+                    </CompactFormRow>
+                  )}
+                  <CompactFormRow
+                    label={field.label}
+                    htmlFor={`profile-${field.property}`}
+                    hint={field.property === "lhost" && form.listener_uuid
+                      ? "This profile value is authoritative. Editing it manually detaches the listener when saved."
+                      : undefined}
+                  >
                     <CompactInput
                       id={`profile-${field.property}`}
                       value={form[field.property]}
@@ -445,6 +646,25 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                       </datalist>
                     )}
                   </CompactFormRow>
+                  {field.property === "lhost" && form.listener_uuid && (
+                    <div className="profile-listener-source">
+                      <dl className="profile-metadata-grid profile-listener-source-metadata">
+                        <div><dt>Listener</dt><dd>{selectedListenerChoice?.listener.name || "Unavailable"}</dd></div>
+                        <div><dt>UUID</dt><dd title={form.listener_uuid}>{form.listener_uuid}</dd></div>
+                        <div><dt>Current listener config</dt><dd>{selectedListenerChoice?.listener.configVersion ?? "—"}</dd></div>
+                        <div><dt>Endpoint source</dt><dd>{selectedListenerSnapshot ? formatEndpointSource(selectedListenerSnapshot.source) : "—"}</dd></div>
+                        <div><dt>Advertised now</dt><dd>{selectedListenerSnapshot?.endpoint || "Unavailable"}</dd></div>
+                        <div><dt>Profile LHOST</dt><dd>{form.lhost || "—"}</dd></div>
+                      </dl>
+                      <p className="desktop-alert desktop-alert--warning">
+                        The relationship is stored by listener UUID, but LHOST is a materialized build value. Listener
+                        changes do not propagate automatically; use Refresh LHOST to reapply the current advertisement.
+                        Existing implants are never changed. The profile API does not retain the listener config version
+                        used at attachment, so the version above is the listener&apos;s current version.
+                      </p>
+                    </div>
+                  )}
+                  </React.Fragment>
                 ))}
 
                 <fieldset className="desktop-fieldset profile-protocol-fields">
@@ -454,7 +674,19 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     <CompactInput
                       id="profile-protocol"
                       value={form.protocol}
-                      onChange={event => setForm(current => ({ ...current, protocol: event.target.value }))}
+                      onChange={event => {
+                        const protocol = event.target.value;
+                        const detachesListener = protocol.trim().toLowerCase() !== "http" && Boolean(form.listener_uuid);
+                        setForm(current => ({
+                          ...current,
+                          protocol,
+                          ...(protocol.trim().toLowerCase() !== "http" ? { listener_uuid: "" } : {})
+                        }));
+                        setError("");
+                        setNotice(detachesListener
+                          ? "Changing away from HTTP will detach the listener when this profile is saved."
+                          : "");
+                      }}
                       placeholder="http"
                     />
                   </CompactFormRow>

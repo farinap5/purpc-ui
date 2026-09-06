@@ -2,6 +2,7 @@ export type ConsoleTabType =
   | "event_log"
   | "sessions"
   | "listeners"
+  | "hosted_files"
   | "loots"
   | "downloads"
   | "images"
@@ -42,24 +43,24 @@ export interface ConnectionSettings {
   serverAddress: string;
 }
 
-export type ListenerProtocol = "http" | "https";
-
-export interface ListenerConfiguration {
-  name: string;
-  protocol: ListenerProtocol;
-  host: string;
-  port: number;
-  persistent: boolean;
-}
+export type ListenerState = "stopped" | "starting" | "running" | "stopping" | "failed";
 
 export interface Listener {
   id: string;
+  uuid: string;
   name: string;
-  payloadType: "Session HTTP" | "Session HTTPS" | "Session DNS" | "Session TCP" | "Foreign HTTP";
+  driver: string;
+  payloadType: string;
   host: string;
   port: number;
-  status: "Active" | "Stopped";
-  encryption: "AES-256-GCM" | "ChaCha20" | "RC4" | "None (Plaintext)";
+  status: ListenerState;
+  desiredState: "stopped" | "running";
+  address?: string;
+  lastError?: string;
+  configVersion?: number;
+  options?: Record<string, unknown>;
+  routes?: unknown[];
+  encryption: string;
   persistent?: boolean;
   associations?: number;
 }

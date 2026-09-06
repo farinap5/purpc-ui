@@ -10,10 +10,23 @@ const MAX_REPLAY_TRANSFER_BYTES = 4 << 20;
 export const TeamOperations = {
   systemHello: "ask.system.hello",
   systemSnapshot: "ask.system.snapshot",
+  listenerList: "ask.listener.list",
+  listenerGet: "ask.listener.get",
   listenerCreate: "ask.listener.create",
+  listenerUpdate: "ask.listener.update",
   listenerStart: "ask.listener.start",
   listenerStop: "ask.listener.stop",
+  listenerRestart: "ask.listener.restart",
   listenerDelete: "ask.listener.delete",
+  listenerHosted: "ask.listener.hosted",
+  listenerHostedSet: "ask.listener.hosted.set",
+  listenerHostedAdd: "ask.listener.hosted.add",
+  listenerHostedRemove: "ask.listener.hosted.remove",
+  listenerHostedNotFoundSet: "ask.listener.hosted.not-found.set",
+  listenerHostedNotFoundClear: "ask.listener.hosted.not-found.clear",
+  listenerTypeList: "ask.listener-type.list",
+  listenerTypeGet: "ask.listener-type.get",
+  listenerCarrierList: "ask.listener-carrier.list",
   sessionTerminate: "ask.session.terminate",
   sessionDelete: "ask.session.delete",
   commandExecute: "ask.command.execute",
@@ -28,6 +41,7 @@ export const TeamOperations = {
   profileCreate: "ask.profile.create",
   profileUpdate: "ask.profile.update",
   profileDelete: "ask.profile.delete",
+  profileListenerSet: "ask.profile.listener.set",
   payloadBuilderList: "ask.payload-builder.list",
   buildCreate: "ask.build.create",
   buildGet: "ask.build.get",
@@ -43,7 +57,18 @@ export const TeamOperations = {
 
 export const TeamEvents = {
   sessionOutput: "evt.session.output",
+  listenerCreated: "evt.listener.created",
+  listenerUpdated: "evt.listener.updated",
+  listenerStarting: "evt.listener.starting",
+  listenerStarted: "evt.listener.started",
+  listenerStopping: "evt.listener.stopping",
+  listenerStopped: "evt.listener.stopped",
+  listenerFailed: "evt.listener.failed",
   listenerDeleted: "evt.listener.deleted",
+  listenerHostedUpdated: "evt.listener.hosted.updated",
+  profileCreated: "evt.profile.created",
+  profileUpdated: "evt.profile.updated",
+  profileDeleted: "evt.profile.deleted",
   payloadBuilderRegistered: "evt.payload-builder.registered",
   payloadBuilderUnregistered: "evt.payload-builder.unregistered",
   buildQueued: "evt.build.queued",
@@ -86,6 +111,57 @@ export interface TeamHelloReply {
   resync_required?: boolean;
 }
 
+export type TeamListenerState = "stopped" | "starting" | "running" | "stopping" | "failed";
+
+export type TeamListenerOptionType =
+  | "string"
+  | "integer"
+  | "boolean"
+  | "duration"
+  | "string_list"
+  | "string_map"
+  | "object"
+  | "file"
+  | "secret";
+
+export interface TeamListenerOptionDefinition {
+  key: string;
+  type: TeamListenerOptionType;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+  mutable_while_running?: boolean;
+  default?: unknown;
+}
+
+export interface TeamListenerDriverDefinition {
+  id: string;
+  description?: string;
+  capabilities?: string[];
+  options?: TeamListenerOptionDefinition[];
+}
+
+export interface TeamListenerCarrierDefinition {
+  id: string;
+  description?: string;
+  options?: TeamListenerOptionDefinition[];
+}
+
+export interface TeamListenerCarrierSpec {
+  type: string;
+  options?: Record<string, unknown>;
+}
+
+export interface TeamListenerRoute {
+  id: string;
+  purpose: "callback" | "interactive";
+  priority?: number;
+  match?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+  inbound: TeamListenerCarrierSpec;
+  outbound: TeamListenerCarrierSpec;
+}
+
 export interface TeamListener {
   name: string;
   uuid: string;
@@ -94,7 +170,79 @@ export interface TeamListener {
   running: boolean;
   persistent: boolean;
   associations: number;
+  driver?: string;
+  options?: Record<string, unknown>;
+  routes?: TeamListenerRoute[];
+  state?: TeamListenerState;
+  desired_state?: "stopped" | "running";
+  address?: string;
+  last_error?: string;
+  config_version?: number;
+  /** Compatibility with teamservers predating the schema-driven driver API. */
   protocol?: string;
+}
+
+export interface TeamListenerCreateRequest {
+  name: string;
+  driver?: string;
+  options?: Record<string, unknown>;
+  routes?: TeamListenerRoute[];
+  persistent?: boolean;
+  start?: boolean;
+}
+
+export interface TeamListenerUpdateRequest {
+  name: string;
+  driver?: string;
+  options?: Record<string, unknown>;
+  routes?: TeamListenerRoute[];
+  persistent?: boolean;
+  expected_config_version: number;
+}
+
+export interface TeamHTTPHostedFile {
+  source_path: string;
+  status?: number;
+  headers?: Record<string, string>;
+}
+
+export interface TeamListenerHostedConfiguration {
+  name: string;
+  listener_uuid: string;
+  hosted_files: Record<string, TeamHTTPHostedFile>;
+  not_found_page: TeamHTTPHostedFile | null;
+  config_version: number;
+}
+
+export interface TeamListenerHostedSetRequest {
+  name: string;
+  hosted_files: Record<string, TeamHTTPHostedFile>;
+  not_found_page?: TeamHTTPHostedFile | null;
+  expected_config_version?: number;
+}
+
+export interface TeamListenerHostedAddRequest {
+  name: string;
+  url_path: string;
+  file: TeamHTTPHostedFile;
+  expected_config_version?: number;
+}
+
+export interface TeamListenerHostedRemoveRequest {
+  name: string;
+  url_path: string;
+  expected_config_version?: number;
+}
+
+export interface TeamListenerHostedNotFoundSetRequest {
+  name: string;
+  file: TeamHTTPHostedFile;
+  expected_config_version?: number;
+}
+
+export interface TeamListenerHostedNotFoundClearRequest {
+  name: string;
+  expected_config_version?: number;
 }
 
 export interface TeamSession {
@@ -142,6 +290,7 @@ export interface TeamScript {
 
 export interface TeamProfile {
   name: string;
+  listener_uuid: string;
   type: string;
   lhost: string;
   os: string;
@@ -421,6 +570,11 @@ export class TeamServerClient {
 
       socket.onopen = () => {
         window.clearTimeout(timeout);
+        if ("protocol" in socket && socket.protocol !== TEAM_API_SUBPROTOCOL) {
+          socket.close(1002, "TeamServer selected an unsupported WebSocket subprotocol");
+          reject(new Error(`TeamServer selected unsupported WebSocket subprotocol ${socket.protocol || "(none)"}.`));
+          return;
+        }
         this.config.onConnectionChange?.(true);
         resolve();
       };

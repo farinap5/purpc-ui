@@ -102,29 +102,38 @@ export const initialSessions: Session[] = [
 export const initialListeners: Listener[] = [
   {
     id: "L-1",
+    uuid: "L-1",
     name: "HTTPS_Secure",
+    driver: "http",
     payloadType: "Session HTTPS",
     host: "192.168.1.103",
     port: 443,
-    status: "Active",
+    status: "running",
+    desiredState: "running",
     encryption: "AES-256-GCM"
   },
   {
     id: "L-2",
+    uuid: "L-2",
     name: "HTTP_Session",
+    driver: "http",
     payloadType: "Session HTTP",
     host: "192.168.1.103",
     port: 80,
-    status: "Active",
+    status: "running",
+    desiredState: "running",
     encryption: "AES-256-GCM"
   },
   {
     id: "L-3",
+    uuid: "L-3",
     name: "DNS_Tunnel",
+    driver: "dns",
     payloadType: "Session DNS",
     host: "ns1.purplecommand.org",
     port: 53,
-    status: "Active",
+    status: "running",
+    desiredState: "running",
     encryption: "RC4"
   }
 ];

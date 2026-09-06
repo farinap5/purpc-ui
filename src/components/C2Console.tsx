@@ -9,9 +9,19 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { Session, Listener, Loot, Script, ConsoleLog, Packet, Command, ConsoleTab } from "../types";
-import { TeamUser, TeamUserCredentials, TeamUserMessage } from "../api/teamApi";
+import {
+  TeamListenerHostedConfiguration,
+  TeamListenerHostedNotFoundClearRequest,
+  TeamListenerHostedRemoveRequest,
+  TeamUser,
+  TeamUserCredentials,
+  TeamUserMessage
+} from "../api/teamApi";
+import type { ListenerHostedConfigurationMap } from "../utils/listenerHosted";
 import { createLootContentPreview, imageMimeType, LootContentPreview } from "../utils/loot";
 import { UserManager } from "./UserManager";
+import { HostedFilesPanel } from "./HostedFilesPanel";
+import type { HostedFileEditorTarget } from "./HostedFileModal";
 import {
   CompactButton,
   CompactFormRow,
@@ -46,9 +56,16 @@ interface C2ConsoleProps {
   eventLogs: ConsoleLog[];
   packets: Packet[];
   users: TeamUser[];
+  hostedConfigurations: ListenerHostedConfigurationMap;
   
+  onRefreshListeners: () => Promise<Listener[]>;
   onSetListenerState: (name: string, start: boolean) => Promise<void>;
+  onRestartListener: (name: string) => Promise<void>;
   onDeleteListener: (name: string) => Promise<void>;
+  onLoadListenerHosted: (name: string) => Promise<TeamListenerHostedConfiguration>;
+  onRemoveListenerHosted: (request: TeamListenerHostedRemoveRequest) => Promise<TeamListenerHostedConfiguration>;
+  onClearListenerHostedNotFound: (request: TeamListenerHostedNotFoundClearRequest) => Promise<TeamListenerHostedConfiguration>;
+  onOpenHostedFile: (target?: HostedFileEditorTarget) => void;
   onRefreshScripts: () => Promise<Script[]>;
   onLoadScript: (path: string) => Promise<Script>;
   onUnloadScript: (path: string) => Promise<void>;
@@ -81,8 +98,15 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   eventLogs,
   packets,
   users,
+  hostedConfigurations,
+  onRefreshListeners,
   onSetListenerState,
+  onRestartListener,
   onDeleteListener,
+  onLoadListenerHosted,
+  onRemoveListenerHosted,
+  onClearListenerHostedNotFound,
+  onOpenHostedFile,
   onRefreshScripts,
   onLoadScript,
   onUnloadScript,
@@ -106,6 +130,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [listenerActionError, setListenerActionError] = useState("");
   const [listenerDeletePending, setListenerDeletePending] = useState("");
+  const [listenerActionPending, setListenerActionPending] = useState("");
+  const [isRefreshingListeners, setIsRefreshingListeners] = useState(false);
 
   // Script editor state
   const [selectedScriptId, setSelectedScriptId] = useState<string>("");
@@ -592,11 +618,39 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const deleteListener = async (name: string) => {
     setListenerActionError("");
     setListenerDeletePending(name);
+    setListenerActionPending(`delete:${name}`);
     try {
       await onDeleteListener(name);
     } catch (error) {
       setListenerDeletePending("");
       setListenerActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setListenerActionPending("");
+    }
+  };
+
+  const runListenerAction = async (name: string, action: "start" | "stop" | "restart") => {
+    setListenerActionError("");
+    setListenerActionPending(`${action}:${name}`);
+    try {
+      if (action === "restart") await onRestartListener(name);
+      else await onSetListenerState(name, action === "start");
+    } catch (error) {
+      setListenerActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setListenerActionPending("");
+    }
+  };
+
+  const refreshListeners = async () => {
+    setListenerActionError("");
+    setIsRefreshingListeners(true);
+    try {
+      await onRefreshListeners();
+    } catch (error) {
+      setListenerActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsRefreshingListeners(false);
     }
   };
 
@@ -604,7 +658,20 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   const renderListeners = () => {
     return (
       <DesktopPanel className="console-data-panel">
-          <PanelHeader actions={<span className="panel-counter">{listeners.length} total</span>}>TeamServer Listeners</PanelHeader>
+          <PanelHeader actions={
+            <>
+              <span className="panel-counter">{listeners.length} total</span>
+              <CompactIconButton
+                type="button"
+                onClick={() => void refreshListeners()}
+                disabled={!isWsConnected || isRefreshingListeners}
+                aria-label="Refresh listeners"
+                title="Refresh listeners"
+              >
+                <RefreshCw aria-hidden="true" />
+              </CompactIconButton>
+            </>
+          }>TeamServer Listeners</PanelHeader>
           {listenerActionError && (
             <p role="alert" className="desktop-alert desktop-alert--error panel-alert">{listenerActionError}</p>
           )}
@@ -612,36 +679,50 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
             <DataGrid aria-label="TeamServer listeners" className="listener-grid">
               <thead>
                 <tr>
-                  <th>Name</th><th>Protocol</th><th>Host Bind</th><th>Port</th><th>Persistent</th><th>Sessions</th><th>Status</th><th className="text-right">Actions</th>
+                  <th>Name</th><th>Driver</th><th>Host Bind</th><th>Port</th><th>Persistent</th><th>Sessions</th><th>State</th><th>Desired</th><th className="text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {listeners.map(l => (
                   <tr key={l.id}>
                     <td className="text-white">{l.name}</td>
-                    <td>{l.payloadType === "Session HTTPS" ? "HTTPS" : "HTTP"}</td>
+                    <td>{l.driver.toUpperCase()}</td>
                     <td>{l.host}</td><td>{l.port}</td>
                     <td>{l.persistent ? "Yes" : "No"}</td><td>{l.associations ?? 0}</td>
-                    <td><span className={l.status === "Active" ? "listener-status is-active" : "listener-status"}>{l.status}</span>
+                    <td>
+                      <span className={`listener-status is-${l.status}`}>{l.status}</span>
+                      {l.lastError && <span className="listener-error-text" title={l.lastError}>{l.lastError}</span>}
                     </td>
+                    <td>{l.desiredState}</td>
                     <td className="text-right">
                       <div className="grid-actions">
                         <CompactButton
                           type="button"
-                          disabled={!isWsConnected || listenerDeletePending === l.name}
-                          onClick={() => {
-                            setListenerActionError("");
-                            void onSetListenerState(l.name, l.status !== "Active")
-                              .catch(error => setListenerActionError(error instanceof Error ? error.message : String(error)));
-                          }}
-                          variant={l.status === "Active" ? "danger" : "secondary"}
+                          disabled={!isWsConnected || Boolean(listenerActionPending) || !["stopped", "failed"].includes(l.status)}
+                          onClick={() => void runListenerAction(l.name, "start")}
+                          variant="secondary"
                         >
-                          {l.status === "Active" ? "Stop" : "Start"}
+                          Start
+                        </CompactButton>
+                        <CompactButton
+                          type="button"
+                          disabled={!isWsConnected || Boolean(listenerActionPending) || !["running", "failed"].includes(l.status)}
+                          onClick={() => void runListenerAction(l.name, "stop")}
+                          variant="danger"
+                        >
+                          Stop
+                        </CompactButton>
+                        <CompactButton
+                          type="button"
+                          disabled={!isWsConnected || Boolean(listenerActionPending) || !["stopped", "running", "failed"].includes(l.status)}
+                          onClick={() => void runListenerAction(l.name, "restart")}
+                        >
+                          Restart
                         </CompactButton>
                         <CompactIconButton
                           type="button"
                           variant="danger"
-                          disabled={!isWsConnected || Boolean(listenerDeletePending)}
+                          disabled={!isWsConnected || Boolean(listenerActionPending) || !["stopped", "running", "failed"].includes(l.status)}
                           onClick={() => void deleteListener(l.name)}
                           aria-label={listenerDeletePending === l.name
                             ? `Waiting for deletion confirmation for listener ${l.name}`
@@ -655,7 +736,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                   </tr>
                 ))}
                 {listeners.length === 0 && (
-                  <tr><td colSpan={8} className="empty-grid-cell">No listeners are registered.</td></tr>
+                  <tr><td colSpan={9} className="empty-grid-cell">No listeners are registered.</td></tr>
                 )}
               </tbody>
             </DataGrid>
@@ -1191,6 +1272,18 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
         return activeTab.sessionId ? renderSessionTerminal(activeTab.sessionId) : renderUnavailablePanel();
       case "listeners":
         return renderListeners();
+      case "hosted_files":
+        return (
+          <HostedFilesPanel
+            listeners={listeners}
+            configurations={hostedConfigurations}
+            isConnected={isWsConnected}
+            onLoad={onLoadListenerHosted}
+            onRemove={onRemoveListenerHosted}
+            onClearNotFound={onClearListenerHostedNotFound}
+            onOpenEditor={onOpenHostedFile}
+          />
+        );
       case "loots":
         return renderSecrets();
       case "downloads":

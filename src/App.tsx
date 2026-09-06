@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Session, Listener, ListenerConfiguration as ListenerConfigurationValues, Loot, Script, ConsoleLog, Packet, ConnectionSettings, Command, ConsoleTab, ConsoleTabType } from "./types";
+import { Session, Listener, Loot, Script, ConsoleLog, Packet, ConnectionSettings, Command, ConsoleTab, ConsoleTabType } from "./types";
 import { C2Toolbar } from "./components/C2Toolbar";
 import { C2SessionTable } from "./components/C2SessionTable";
 import { C2Console } from "./components/C2Console";
@@ -10,6 +10,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { AuthenticationPage } from "./components/AuthenticationPage";
 import { ListenerConfiguration } from "./components/ListenerConfiguration";
 import { AboutModal } from "./components/AboutModal";
+import { HostedFileModal, type HostedFileEditorTarget } from "./components/HostedFileModal";
 import { isImageFileName, isSecretFileName } from "./utils/loot";
 import {
   isBuildStateEvent,
@@ -20,6 +21,13 @@ import {
   sortTeamBuilds,
   upsertTeamBuild
 } from "./utils/teamBuildFlow";
+import { reduceProfileEvent, sortTeamProfiles, upsertTeamProfile } from "./utils/profileEvents";
+import {
+  reduceListenerHostedEvent,
+  removeListenerHostedConfiguration,
+  upsertListenerHostedConfiguration,
+  type ListenerHostedConfigurationMap
+} from "./utils/listenerHosted";
 import {
   TeamBuild,
   TeamBuildCreateRequest,
@@ -30,6 +38,14 @@ import {
   TeamEventCursor,
   TeamEvents,
   TeamListener,
+  TeamListenerCarrierDefinition,
+  TeamListenerCreateRequest,
+  TeamListenerDriverDefinition,
+  TeamListenerHostedAddRequest,
+  TeamListenerHostedConfiguration,
+  TeamListenerHostedNotFoundClearRequest,
+  TeamListenerHostedNotFoundSetRequest,
+  TeamListenerHostedRemoveRequest,
   TeamLoot,
   TeamLootGetReply,
   TeamOperations,
@@ -57,6 +73,15 @@ const USER_STATUS_EVENTS = new Set<string>([
   TeamEvents.userLogout,
   TeamEvents.userCreated,
   TeamEvents.userUpdated
+]);
+const LISTENER_SNAPSHOT_EVENTS = new Set<string>([
+  TeamEvents.listenerCreated,
+  TeamEvents.listenerUpdated,
+  TeamEvents.listenerStarting,
+  TeamEvents.listenerStarted,
+  TeamEvents.listenerStopping,
+  TeamEvents.listenerStopped,
+  TeamEvents.listenerFailed
 ]);
 
 const sortTeamUsers = (users: TeamUser[]) => [...users].sort((left, right) => {
@@ -133,17 +158,36 @@ const mapTeamSession = (session: TeamSession, note = ""): Session => {
   };
 };
 
-const mapTeamListener = (listener: TeamListener): Listener => ({
-  id: listener.name,
-  name: listener.name,
-  payloadType: listener.protocol?.toLowerCase() === "https" ? "Session HTTPS" : "Session HTTP",
-  host: listener.host,
-  port: Number.parseInt(listener.port, 10) || 0,
-  status: listener.running ? "Active" : "Stopped",
-  encryption: "None (Plaintext)",
-  persistent: listener.persistent,
-  associations: listener.associations
-});
+const mapTeamListener = (listener: TeamListener): Listener => {
+  const driver = (listener.driver || listener.protocol || "http").toLowerCase();
+  const state = listener.state || (listener.running ? "running" : "stopped");
+  const tls = listener.options?.tls;
+  const tlsEnabled = Boolean(tls && typeof tls === "object" && !Array.isArray(tls) && (tls as Record<string, unknown>).enabled);
+  return {
+    id: listener.uuid || listener.name,
+    uuid: listener.uuid || listener.name,
+    name: listener.name,
+    driver,
+    payloadType: `Session ${driver === "http" && tlsEnabled ? "HTTPS" : driver.toUpperCase()}`,
+    host: listener.host,
+    port: Number.parseInt(listener.port, 10) || 0,
+    status: state,
+    desiredState: listener.desired_state || (listener.running ? "running" : "stopped"),
+    address: listener.address,
+    lastError: listener.last_error,
+    configVersion: listener.config_version,
+    options: listener.options,
+    routes: listener.routes,
+    encryption: tlsEnabled ? "TLS" : "None (Plaintext)",
+    persistent: listener.persistent,
+    associations: listener.associations
+  };
+};
+
+const upsertListener = (listeners: Listener[], listener: Listener) => [
+  ...listeners.filter(item => item.uuid !== listener.uuid && item.name !== listener.name),
+  listener
+].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
 
 const mapTeamLoot = (loot: TeamLoot): Loot => {
   const type: Loot["type"] = isImageFileName(loot.file_name)
@@ -271,6 +315,7 @@ export default function App() {
   // Master states
   const [sessions, setSessions] = useState<Session[]>([]);
   const [listeners, setListeners] = useState<Listener[]>([]);
+  const [listenerHostedConfigurations, setListenerHostedConfigurations] = useState<ListenerHostedConfigurationMap>({});
   const [loots, setLoots] = useState<Loot[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
   const [commands, setCommands] = useState<Command[]>([]);
@@ -307,6 +352,7 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isListenerConfigurationOpen, setIsListenerConfigurationOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
+  const [hostedFileEditor, setHostedFileEditor] = useState<HostedFileEditorTarget | null>(null);
 
   // Workspace split-panel state
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -441,9 +487,63 @@ export default function App() {
     }
   };
 
+  const applyListenerEvent = (event: TeamEnvelope) => {
+    if (LISTENER_SNAPSHOT_EVENTS.has(event.type)) {
+      const listener = event.data as TeamListener;
+      if (listener?.name) {
+        const mapped = mapTeamListener(listener);
+        setListeners(previous => upsertListener(previous, mapped));
+        setListenerHostedConfigurations(previous => {
+          const cached = previous[mapped.uuid];
+          return !cached || cached.config_version === mapped.configVersion
+            ? previous
+            : removeListenerHostedConfiguration(previous, mapped);
+        });
+      }
+      return;
+    }
+    if (event.type === TeamEvents.listenerDeleted) {
+      const deletedName = typeof event.data === "string"
+        ? event.data
+        : (event.data as { name?: string } | undefined)?.name;
+      if (deletedName) {
+        setListeners(previous => previous.filter(listener => listener.name !== deletedName));
+        setListenerHostedConfigurations(previous => removeListenerHostedConfiguration(previous, { name: deletedName }));
+      }
+    }
+  };
+
+  const applyListenerHostedEvent = (event: TeamEnvelope) => {
+    if (event.type !== TeamEvents.listenerHostedUpdated) return;
+    const configuration = event.data as TeamListenerHostedConfiguration | undefined;
+    if (!configuration?.name || !configuration.listener_uuid) return;
+    setListenerHostedConfigurations(previous => reduceListenerHostedEvent(previous, event));
+    setListeners(previous => previous.map(listener =>
+      listener.uuid === configuration.listener_uuid || listener.name === configuration.name
+        ? { ...listener, configVersion: configuration.config_version }
+        : listener
+    ));
+  };
+
+  const applyProfileEvent = (event: TeamEnvelope) => {
+    if (
+      event.type === TeamEvents.profileCreated ||
+      event.type === TeamEvents.profileUpdated ||
+      event.type === TeamEvents.profileDeleted
+    ) {
+      setProfiles(previous => reduceProfileEvent(previous, event));
+    }
+  };
+
   const applySnapshot = (snapshot: TeamSnapshot) => {
     setSessions(snapshot.sessions.map(session => mapTeamSession(session, sessionNotesRef.current[session.name] || "")));
     setListeners(snapshot.listeners.map(mapTeamListener));
+    setListenerHostedConfigurations(previous => {
+      const current = new Map(snapshot.listeners.map(listener => [listener.uuid || listener.name, listener.config_version]));
+      return Object.fromEntries(Object.entries(previous).filter(([uuid, configuration]) =>
+        current.has(uuid) && current.get(uuid) === configuration.config_version
+      ));
+    });
     setScripts(snapshot.scripts.map(mapTeamScript));
     setCommands(snapshot.commands.map(mapTeamCommand));
     setProfiles(snapshot.profiles);
@@ -471,6 +571,9 @@ export default function App() {
     appendLogs(logsForServerEvent(event));
     applyBuildEvent(event);
     applyPayloadBuilderEvent(event);
+    applyListenerEvent(event);
+    applyListenerHostedEvent(event);
+    applyProfileEvent(event);
 
     if (USER_STATUS_EVENTS.has(event.type)) {
       const user = event.data as TeamUser;
@@ -479,13 +582,6 @@ export default function App() {
       const user = event.data as TeamUser;
       if (user?.uuid || user?.name) {
         setUsers(previous => previous.filter(item => item.uuid !== user.uuid && item.name !== user.name));
-      }
-    } else if (event.type === TeamEvents.listenerDeleted) {
-      const deletedName = typeof event.data === "string"
-        ? event.data
-        : (event.data as { name?: string } | undefined)?.name;
-      if (deletedName) {
-        setListeners(previous => previous.filter(listener => listener.name !== deletedName));
       }
     } else if (event.type === "evt.loot.created") {
       const createdLoot = mapTeamLoot(event.data as TeamLoot);
@@ -511,7 +607,6 @@ export default function App() {
 
     try {
       if (
-        event.type.startsWith("evt.listener.") ||
         (event.type.startsWith("evt.session.") && !["evt.session.checkin", "evt.session.deleted", TeamEvents.sessionOutput].includes(event.type)) ||
         event.type.startsWith("evt.script.")
       ) {
@@ -545,6 +640,9 @@ export default function App() {
         events.forEach(event => {
           applyBuildEvent(event);
           applyPayloadBuilderEvent(event);
+          applyListenerEvent(event);
+          applyListenerHostedEvent(event);
+          applyProfileEvent(event);
         });
       },
       onReplayWarning: message => addLog("error", message),
@@ -600,6 +698,9 @@ export default function App() {
       initializationEvents.forEach(event => {
         applyBuildEvent(event);
         applyPayloadBuilderEvent(event);
+        applyListenerEvent(event);
+        applyListenerHostedEvent(event);
+        applyProfileEvent(event);
       });
       const stateAdvancedDuringInitialization = initializationEvents.some(
         event => !event.sequence || event.sequence > snapshot.event_sequence
@@ -624,32 +725,142 @@ export default function App() {
     }
   };
 
-  const handleAddListener = async (configuration: ListenerConfigurationValues) => {
+  const handleListListeners = async () => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
-    const listener = await client.request<TeamListener>(TeamOperations.listenerCreate, {
-      name: configuration.name,
-      protocol: configuration.protocol,
-      host: configuration.host,
-      port: String(configuration.port),
-      persistent: configuration.persistent
+    const listed = await client.request<TeamListener[]>(TeamOperations.listenerList, {});
+    const mapped = listed.map(mapTeamListener).sort((left, right) => left.name.localeCompare(right.name));
+    setListeners(mapped);
+    setListenerHostedConfigurations(previous => {
+      const versions = new Map(mapped.map(listener => [listener.uuid, listener.configVersion]));
+      return Object.fromEntries(Object.entries(previous).filter(([uuid, configuration]) =>
+        versions.has(uuid) && versions.get(uuid) === configuration.config_version
+      ));
     });
-    const configuredListener = listener.protocol ? listener : { ...listener, protocol: configuration.protocol };
-    setListeners(previous => [...previous.filter(item => item.name !== listener.name), mapTeamListener(configuredListener)]);
+    return mapped;
+  };
+
+  const handleGetListener = async (name: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    const listener = await client.request<TeamListener>(TeamOperations.listenerGet, { name });
+    const mapped = mapTeamListener(listener);
+    setListeners(previous => upsertListener(previous, mapped));
+    setListenerHostedConfigurations(previous => {
+      const cached = previous[mapped.uuid];
+      return !cached || cached.config_version === mapped.configVersion
+        ? previous
+        : removeListenerHostedConfiguration(previous, mapped);
+    });
+    return listener;
+  };
+
+  const handleAddListener = async (request: TeamListenerCreateRequest) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    try {
+      const listener = await client.request<TeamListener>(TeamOperations.listenerCreate, request);
+      setListeners(previous => upsertListener(previous, mapTeamListener(listener)));
+    } catch (error) {
+      await handleGetListener(request.name).catch(() => handleListListeners().then(() => undefined)).catch(() => undefined);
+      throw error;
+    }
   };
 
   const handleListenerState = async (name: string, start: boolean) => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
-    const listener = await client.request<TeamListener>(start ? TeamOperations.listenerStart : TeamOperations.listenerStop, { name });
-    setListeners(previous => previous.map(item => item.name === name ? mapTeamListener(listener) : item));
+    try {
+      const listener = await client.request<TeamListener>(start ? TeamOperations.listenerStart : TeamOperations.listenerStop, { name });
+      setListeners(previous => upsertListener(previous, mapTeamListener(listener)));
+    } catch (error) {
+      await handleGetListener(name).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const handleRestartListener = async (name: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    try {
+      const listener = await client.request<TeamListener>(TeamOperations.listenerRestart, { name });
+      setListeners(previous => upsertListener(previous, mapTeamListener(listener)));
+    } catch (error) {
+      await handleGetListener(name).catch(() => undefined);
+      throw error;
+    }
   };
 
   const handleDeleteListener = async (name: string) => {
     const client = clientRef.current;
     if (!client) throw new Error("Not connected to the teamserver.");
-    await client.request<unknown>(TeamOperations.listenerDelete, { name });
+    try {
+      const deleted = await client.request<{ name: string }>(TeamOperations.listenerDelete, { name });
+      setListeners(previous => previous.filter(listener => listener.name !== (deleted.name || name)));
+      setListenerHostedConfigurations(previous => removeListenerHostedConfiguration(previous, { name: deleted.name || name }));
+    } catch (error) {
+      await handleGetListener(name).catch(() => undefined);
+      throw error;
+    }
   };
+
+  const handleListListenerDrivers = async () => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    return client.request<TeamListenerDriverDefinition[]>(TeamOperations.listenerTypeList, {});
+  };
+
+  const handleGetListenerDriver = async (name: string) => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    return client.request<TeamListenerDriverDefinition>(TeamOperations.listenerTypeGet, { name });
+  };
+
+  const handleListListenerCarriers = async () => {
+    const client = clientRef.current;
+    if (!client) throw new Error("Not connected to the teamserver.");
+    return client.request<TeamListenerCarrierDefinition[]>(TeamOperations.listenerCarrierList, {});
+  };
+
+  const cacheListenerHostedConfiguration = (configuration: TeamListenerHostedConfiguration) => {
+    setListenerHostedConfigurations(previous => upsertListenerHostedConfiguration(previous, configuration));
+    setListeners(previous => previous.map(listener =>
+      listener.uuid === configuration.listener_uuid || listener.name === configuration.name
+        ? { ...listener, configVersion: configuration.config_version }
+        : listener
+    ));
+    return configuration;
+  };
+
+  const handleGetListenerHosted = async (name: string) => {
+    const configuration = await requireTeamClient().request<TeamListenerHostedConfiguration>(
+      TeamOperations.listenerHosted,
+      { name }
+    );
+    return cacheListenerHostedConfiguration(configuration);
+  };
+
+  const mutateListenerHosted = async <T extends { name: string },>(operation: string, request: T) => {
+    try {
+      const configuration = await requireTeamClient().request<TeamListenerHostedConfiguration>(operation, request);
+      return cacheListenerHostedConfiguration(configuration);
+    } catch (error) {
+      await handleGetListenerHosted(request.name).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const handleAddListenerHosted = (request: TeamListenerHostedAddRequest) =>
+    mutateListenerHosted(TeamOperations.listenerHostedAdd, request);
+
+  const handleRemoveListenerHosted = (request: TeamListenerHostedRemoveRequest) =>
+    mutateListenerHosted(TeamOperations.listenerHostedRemove, request);
+
+  const handleSetListenerHostedNotFound = (request: TeamListenerHostedNotFoundSetRequest) =>
+    mutateListenerHosted(TeamOperations.listenerHostedNotFoundSet, request);
+
+  const handleClearListenerHostedNotFound = (request: TeamListenerHostedNotFoundClearRequest) =>
+    mutateListenerHosted(TeamOperations.listenerHostedNotFoundClear, request);
 
   const handleRefreshScripts = async () => {
     const client = clientRef.current;
@@ -774,8 +985,9 @@ export default function App() {
 
   const handleListProfiles = async () => {
     const items = await requireTeamClient().request<TeamProfile[]>(TeamOperations.profileList, {});
-    setProfiles(items);
-    return items;
+    const sorted = sortTeamProfiles(items);
+    setProfiles(sorted);
+    return sorted;
   };
 
   const handleGetProfile = (name: string) => {
@@ -784,13 +996,22 @@ export default function App() {
 
   const handleCreateProfile = async (profile: TeamProfile) => {
     const created = await requireTeamClient().request<TeamProfile>(TeamOperations.profileCreate, profile);
-    setProfiles(previous => [...previous.filter(item => item.name !== created.name), created]);
+    setProfiles(previous => upsertTeamProfile(previous, created));
     return created;
   };
 
   const handleUpdateProfile = async (name: string, key: TeamProfileUpdateKey, value: string) => {
     const updated = await requireTeamClient().request<TeamProfile>(TeamOperations.profileUpdate, { name, key, value });
-    setProfiles(previous => previous.map(profile => profile.name === updated.name ? updated : profile));
+    setProfiles(previous => upsertTeamProfile(previous, updated));
+    return updated;
+  };
+
+  const handleSetProfileListener = async (name: string, listenerUUID: string) => {
+    const updated = await requireTeamClient().request<TeamProfile>(TeamOperations.profileListenerSet, {
+      name,
+      listener_uuid: listenerUUID
+    });
+    setProfiles(previous => upsertTeamProfile(previous, updated));
     return updated;
   };
 
@@ -917,12 +1138,13 @@ export default function App() {
         onConnectWs={handleConnect}
         onDisconnectWs={handleDisconnect}
         sessionsCount={sessions.filter(b => b.status === "active").length}
-        activeListenersCount={listeners.filter(l => l.status === "Active").length}
+        activeListenersCount={listeners.filter(l => l.status === "running").length}
         currentLag={currentLag}
         onTriggerPayloadModal={() => setIsPayloadOpen(true)}
         onTriggerBuildManager={() => setIsBuildManagerOpen(true)}
         onTriggerProfileModal={() => setIsProfileManagerOpen(true)}
         onTriggerListenerModal={() => setIsListenerConfigurationOpen(true)}
+        onTriggerHostFileModal={() => setHostedFileEditor({})}
         onTriggerSettingsModal={() => setIsSettingsOpen(true)}
         onTriggerAboutModal={() => setIsAboutOpen(true)}
       />
@@ -1013,8 +1235,15 @@ export default function App() {
             eventLogs={eventLogs}
             packets={packets}
             users={users}
+            hostedConfigurations={listenerHostedConfigurations}
+            onRefreshListeners={handleListListeners}
             onSetListenerState={handleListenerState}
+            onRestartListener={handleRestartListener}
             onDeleteListener={handleDeleteListener}
+            onLoadListenerHosted={handleGetListenerHosted}
+            onRemoveListenerHosted={handleRemoveListenerHosted}
+            onClearListenerHostedNotFound={handleClearListenerHostedNotFound}
+            onOpenHostedFile={(target) => setHostedFileEditor(target || {})}
             onRefreshScripts={handleRefreshScripts}
             onLoadScript={handleLoadScript}
             onUnloadScript={handleUnloadScript}
@@ -1061,12 +1290,25 @@ export default function App() {
 
       <ProfileManager
         isOpen={isProfileManagerOpen}
+        listeners={listeners}
+        serverProfiles={profiles}
         onClose={() => setIsProfileManagerOpen(false)}
         onList={handleListProfiles}
         onGet={handleGetProfile}
         onCreate={handleCreateProfile}
         onUpdate={handleUpdateProfile}
+        onSetListener={handleSetProfileListener}
         onDelete={handleDeleteProfile}
+      />
+
+      <HostedFileModal
+        isOpen={hostedFileEditor !== null}
+        listeners={listeners}
+        initial={hostedFileEditor || undefined}
+        onClose={() => setHostedFileEditor(null)}
+        onLoad={handleGetListenerHosted}
+        onAdd={handleAddListenerHosted}
+        onSetNotFound={handleSetListenerHostedNotFound}
       />
 
       {/* 4. MODAL: Global C2 performance and configurations */}
@@ -1085,6 +1327,9 @@ export default function App() {
         isOpen={isListenerConfigurationOpen}
         isConnected={isWsConnected}
         onClose={() => setIsListenerConfigurationOpen(false)}
+        onListDrivers={handleListListenerDrivers}
+        onGetDriver={handleGetListenerDriver}
+        onListCarriers={handleListListenerCarriers}
         onCreate={handleAddListener}
       />
 

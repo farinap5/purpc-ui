@@ -28,6 +28,7 @@ interface ToolbarProps {
   onTriggerBuildManager: () => void;
   onTriggerProfileModal: () => void;
   onTriggerListenerModal: () => void;
+  onTriggerHostFileModal: () => void;
   onTriggerSettingsModal: () => void;
   onTriggerAboutModal: () => void;
 }
@@ -65,6 +66,7 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
   onTriggerBuildManager,
   onTriggerProfileModal,
   onTriggerListenerModal,
+  onTriggerHostFileModal,
   onTriggerSettingsModal,
   onTriggerAboutModal
 }) => {
@@ -83,6 +85,7 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
       { label: "Secrets", action: () => onAddTab("loots", "Secrets") },
       { label: "Downloaded Files", action: () => onAddTab("downloads", "Loot: Files") },
       { label: "Images", action: () => onAddTab("images", "Loot: Images") },
+      { label: "Hosted Files", action: () => onAddTab("hosted_files", "Hosted Files") },
       { label: "Event Monitor", action: () => onAddTab("packets", "Event Monitor") }
     ],
     "Payload": [
@@ -95,10 +98,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
     ],
     "Server": [
       { label: "Listener", action: onTriggerListenerModal, disabled: !isWsConnected },
-      { label: "Manage Web Servers", action: () => alert("HTTP/S web management portal.") },
-      { label: "Hosted Files", action: () => alert("Upload files to payload server.") }
+      { label: "Host File", action: onTriggerHostFileModal, disabled: !isWsConnected },
+      { label: "Hosted Files", action: () => onAddTab("hosted_files", "Hosted Files") }
     ],
-    "Reporting": [],
     "Help": [
       { label: "About PurpleCommand", action: onTriggerAboutModal }
     ]
