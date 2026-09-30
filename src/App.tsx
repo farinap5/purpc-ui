@@ -11,6 +11,7 @@ import { AuthenticationPage } from "./components/AuthenticationPage";
 import { ListenerConfiguration } from "./components/ListenerConfiguration";
 import { AboutModal } from "./components/AboutModal";
 import { HostedFileModal, type HostedFileEditorTarget } from "./components/HostedFileModal";
+import { SpeakerConfiguration } from "./components/SpeakerConfiguration";
 import { isImageFileName, isSecretFileName } from "./utils/loot";
 import {
   isBuildStateEvent,
@@ -28,6 +29,13 @@ import {
   upsertListenerHostedConfiguration,
   type ListenerHostedConfigurationMap
 } from "./utils/listenerHosted";
+import {
+  redactControlTraffic,
+  reduceSpeakerEvent,
+  sortSpeakers,
+  upsertSpeaker
+} from "./utils/speaker";
+import { reduceStreamEvent, sortStreams } from "./utils/streams";
 import {
   TeamBuild,
   TeamBuildCreateRequest,
@@ -53,9 +61,14 @@ import {
   TeamProfile,
   TeamProfileUpdateKey,
   TeamScript,
+  TeamSpeaker,
+  TeamSpeakerCreateRequest,
+  TeamSpeakerUpdateRequest,
+  TeamStream,
   TeamSessionOutput,
   TeamServerClient,
   TeamSession,
+  TeamSessionUpdateRequest,
   TeamSnapshot,
   TeamTask,
   TeamUser,
@@ -94,24 +107,6 @@ const upsertTeamUser = (users: TeamUser[], user: TeamUser) => sortTeamUsers([
   user
 ]);
 
-
-const redactSensitiveTraffic = (raw: string) => {
-  const redact = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(redact);
-    if (!value || typeof value !== "object") return value;
-    return Object.fromEntries(Object.entries(value).map(([key, nested]) => [
-      key,
-      key.toLowerCase() === "token" ? "[REDACTED]" : redact(nested)
-    ]));
-  };
-
-  try {
-    return JSON.stringify(redact(JSON.parse(raw)));
-  } catch {
-    return raw;
-  }
-};
-
 const createWebSocketSystemEvent = (action: string, address: string): Packet => ({
   id: `event-${action.toLowerCase()}-${Date.now()}`,
   timestamp: new Date().toLocaleTimeString(),
@@ -136,16 +131,33 @@ const retainPackets = (packets: Packet[]) => {
   return retained;
 };
 
-const mapTeamSession = (session: TeamSession, note = ""): Session => {
+const mapTeamSession = (
+  session: TeamSession,
+  listenerResources: Array<Pick<TeamListener, "uuid" | "name">> = [],
+  speakerResources: Array<Pick<TeamSpeaker, "uuid" | "name">> = []
+): Session => {
   const lastSeen = Date.parse(session.last_seen);
+  const transport = session.transport === "speaker" ? "speaker" : "listener";
+  const transportUUID = transport === "speaker" ? session.speaker_uuid || "" : session.listener_uuid || "";
+  const resource = transport === "speaker"
+    ? speakerResources.find(speaker => transportUUID && speaker.uuid === transportUUID)
+    : listenerResources.find(listener => transportUUID && listener.uuid === transportUUID);
+  const recordedName = transport === "speaker" ? session.speaker : session.listener;
+  const transportName = resource?.name || recordedName || transportUUID || "—";
   return {
     id: session.name,
     extIp: session.socket || "—",
     intIp: session.uuid,
     listener: session.payload_type,
+    transport,
+    transportName,
+    transportUUID,
+    liveness: session.liveness || (session.alive ? "healthy" : "unavailable"),
+    healthMonitoring: session.health_monitoring ?? true,
     user: session.user || "unknown",
     computer: session.hostname || "unknown",
-    note,
+    color: session.color || "",
+    note: session.note || "",
     process: session.process || "unknown",
     pid: session.pid,
     arch: "Unknown",
@@ -268,7 +280,7 @@ const logsForServerEvent = (event: TeamEnvelope): ConsoleLog[] => {
     logs.push({
       id: `event-${idPrefix}`,
       timestamp: eventTime,
-      type: event.type === "evt.listener.failed" ? "error" : userMessage ? "input" : "system",
+      type: event.type === TeamEvents.listenerFailed || event.type === TeamEvents.speakerFailed ? "error" : userMessage ? "input" : "system",
       message: userMessage?.user
         ? `<${userMessage.user}> ${userMessage.message}`
         : eventUser?.name
@@ -315,6 +327,8 @@ export default function App() {
   // Master states
   const [sessions, setSessions] = useState<Session[]>([]);
   const [listeners, setListeners] = useState<Listener[]>([]);
+  const [speakers, setSpeakers] = useState<TeamSpeaker[]>([]);
+  const [streams, setStreams] = useState<TeamStream[]>([]);
   const [listenerHostedConfigurations, setListenerHostedConfigurations] = useState<ListenerHostedConfigurationMap>({});
   const [loots, setLoots] = useState<Loot[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
@@ -331,11 +345,11 @@ export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isWsConnected, setIsWsConnected] = useState(false);
   const [operatorName, setOperatorName] = useState("gnome");
+  const [authenticatedPrincipal, setAuthenticatedPrincipal] = useState<TeamUser | null>(null);
   const [authToken, setAuthToken] = useState("");
   const [serverAddress, setServerAddress] = useState("http://127.0.0.1:8080");
   const [currentLag, setCurrentLag] = useState(0);
   const clientRef = useRef<TeamServerClient | null>(null);
-  const sessionNotesRef = useRef<Record<string, string>>({});
   const eventCursorByServerRef = useRef<Record<string, TeamEventCursor>>({});
 
   // Tabbed system state
@@ -353,6 +367,7 @@ export default function App() {
   const [isListenerConfigurationOpen, setIsListenerConfigurationOpen] = useState(false);
   const [isAboutOpen, setIsAboutOpen] = useState(false);
   const [hostedFileEditor, setHostedFileEditor] = useState<HostedFileEditorTarget | null>(null);
+  const [speakerEditorUUID, setSpeakerEditorUUID] = useState<string | null>(null);
 
   // Workspace split-panel state
   const workspaceRef = useRef<HTMLDivElement | null>(null);
@@ -442,7 +457,6 @@ export default function App() {
   };
 
   const removeSessionFromWorkspace = (id: string) => {
-    delete sessionNotesRef.current[id];
     setSessions(previous => previous.filter(session => session.id !== id));
     setSelectedSessionId(current => current === id ? null : current);
     setTabs(previous => previous.filter(tab => tab.sessionId !== id));
@@ -493,6 +507,11 @@ export default function App() {
       if (listener?.name) {
         const mapped = mapTeamListener(listener);
         setListeners(previous => upsertListener(previous, mapped));
+        setSessions(previous => previous.map(session =>
+          session.transport === "listener" && session.transportUUID === mapped.uuid
+            ? { ...session, transportName: mapped.name }
+            : session
+        ));
         setListenerHostedConfigurations(previous => {
           const cached = previous[mapped.uuid];
           return !cached || cached.config_version === mapped.configVersion
@@ -535,9 +554,39 @@ export default function App() {
     }
   };
 
+  const applySpeakerEvent = (event: TeamEnvelope) => {
+    if (!event.type.startsWith("evt.speaker.")) return;
+    setSpeakers(previous => reduceSpeakerEvent(previous, event));
+    if (event.type !== TeamEvents.speakerDeleted) {
+      const speaker = event.data as TeamSpeaker | undefined;
+      if (speaker?.uuid) {
+        setSessions(previous => previous.map(session =>
+          session.transport === "speaker" && session.transportUUID === speaker.uuid
+            ? { ...session, transportName: speaker.name }
+            : session
+        ));
+      }
+    }
+    if (event.type === TeamEvents.speakerDeleted) {
+      const deleted = event.data as { uuid?: string } | undefined;
+      if (deleted?.uuid) setSpeakerEditorUUID(current => current === deleted.uuid ? null : current);
+    }
+  };
+
+  const applyStreamEvent = (event: TeamEnvelope) => {
+    if (!event.type.startsWith("evt.stream.")) return;
+    setStreams(previous => reduceStreamEvent(previous, event));
+  };
+
   const applySnapshot = (snapshot: TeamSnapshot) => {
-    setSessions(snapshot.sessions.map(session => mapTeamSession(session, sessionNotesRef.current[session.name] || "")));
+    setSessions(snapshot.sessions.map(session => mapTeamSession(
+      session,
+      snapshot.listeners,
+      snapshot.speakers || []
+    )));
     setListeners(snapshot.listeners.map(mapTeamListener));
+    setSpeakers(sortSpeakers(snapshot.speakers || []));
+    setStreams(sortStreams(snapshot.streams || []));
     setListenerHostedConfigurations(previous => {
       const current = new Map(snapshot.listeners.map(listener => [listener.uuid || listener.name, listener.config_version]));
       return Object.fromEntries(Object.entries(previous).filter(([uuid, configuration]) =>
@@ -574,6 +623,8 @@ export default function App() {
     applyListenerEvent(event);
     applyListenerHostedEvent(event);
     applyProfileEvent(event);
+    applySpeakerEvent(event);
+    applyStreamEvent(event);
 
     if (USER_STATUS_EVENTS.has(event.type)) {
       const user = event.data as TeamUser;
@@ -592,12 +643,9 @@ export default function App() {
     } else if (event.type === "evt.session.deleted") {
       const deletedSession = event.data as { name?: string };
       if (deletedSession.name) removeSessionFromWorkspace(deletedSession.name);
-    } else if (event.type === "evt.session.checkin") {
+    } else if (event.type === "evt.session.checkin" || event.type === TeamEvents.sessionUpdated) {
       const checkedInSession = event.data as TeamSession;
-      const mappedSession = mapTeamSession(
-        checkedInSession,
-        sessionNotesRef.current[checkedInSession.name] || ""
-      );
+      const mappedSession = mapTeamSession(checkedInSession, listeners, speakers);
       setSessions(previous => {
         const existingIndex = previous.findIndex(session => session.id === mappedSession.id);
         if (existingIndex === -1) return [...previous, mappedSession];
@@ -607,7 +655,7 @@ export default function App() {
 
     try {
       if (
-        (event.type.startsWith("evt.session.") && !["evt.session.checkin", "evt.session.deleted", TeamEvents.sessionOutput].includes(event.type)) ||
+        (event.type.startsWith("evt.session.") && !["evt.session.checkin", "evt.session.deleted", TeamEvents.sessionUpdated, TeamEvents.sessionOutput].includes(event.type)) ||
         event.type.startsWith("evt.script.")
       ) {
         const snapshot = await client.request<TeamSnapshot>(TeamOperations.systemSnapshot, {});
@@ -623,10 +671,19 @@ export default function App() {
     clientRef.current = null;
     previousClient?.close();
     setIsWsConnected(false);
+    setAuthenticatedPrincipal(null);
 
     let client: TeamServerClient;
     let initializing = true;
+    let connectionPrincipal: TeamUser | null = null;
     const initializationEvents: TeamEnvelope[] = [];
+    const captureConnectionPrincipal = (events: TeamEnvelope[]) => {
+      for (const event of events) {
+        if (event.type !== TeamEvents.userLogin) continue;
+        const user = event.data as TeamUser | undefined;
+        if (user?.uuid) connectionPrincipal = user;
+      }
+    };
     const serverKey = settings.serverAddress.replace(/\/$/, "");
     client = new TeamServerClient({
       serverAddress: settings.serverAddress,
@@ -636,6 +693,7 @@ export default function App() {
         if (clientRef.current === client) eventCursorByServerRef.current[serverKey] = cursor;
       },
       onReplay: events => {
+        if (initializing) captureConnectionPrincipal(events);
         appendLogs(events.flatMap(logsForServerEvent));
         events.forEach(event => {
           applyBuildEvent(event);
@@ -643,11 +701,13 @@ export default function App() {
           applyListenerEvent(event);
           applyListenerHostedEvent(event);
           applyProfileEvent(event);
+          applySpeakerEvent(event);
+          applyStreamEvent(event);
         });
       },
       onReplayWarning: message => addLog("error", message),
       onTraffic: (direction, traffic) => {
-        const payload = redactSensitiveTraffic(traffic.payload);
+        const payload = redactControlTraffic(traffic.payload);
         const packet: Packet = {
           id: `frame-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           timestamp: new Date().toLocaleTimeString(),
@@ -662,12 +722,16 @@ export default function App() {
         setPackets(previous => retainPackets([packet, ...previous]));
       },
       onEvent: event => {
-        if (initializing) initializationEvents.push(event);
+        if (initializing) {
+          initializationEvents.push(event);
+          captureConnectionPrincipal([event]);
+        }
         else void handleServerEvent(event, client);
       },
       onConnectionChange: (connected, reason) => {
         if (clientRef.current !== client) return;
         setIsWsConnected(connected);
+        if (!connected) setAuthenticatedPrincipal(null);
         if (!connected && reason && reason !== "Operator disconnected") {
           addLog("system", `${TeamEvents.userLogout}: ${settings.username} · local connection closed`);
           addLog("error", `TeamServer connection lost: ${reason}`);
@@ -686,6 +750,10 @@ export default function App() {
       if (hello.protocol !== 1) {
         throw new Error(`Unsupported teamserver protocol version ${hello.protocol}.`);
       }
+      if (!connectionPrincipal) {
+        const connectedUsers = (snapshot.users || []).filter(user => user.connected);
+        if (connectedUsers.length === 1) connectionPrincipal = connectedUsers[0];
+      }
       const [serverLoot, serverPayloadBuilders] = await Promise.all([
         client.request<TeamLoot[]>(TeamOperations.lootList, {}),
         client.request<unknown>(TeamOperations.payloadBuilderList, {})
@@ -701,13 +769,16 @@ export default function App() {
         applyListenerEvent(event);
         applyListenerHostedEvent(event);
         applyProfileEvent(event);
+        applySpeakerEvent(event);
+        applyStreamEvent(event);
       });
       const stateAdvancedDuringInitialization = initializationEvents.some(
         event => !event.sequence || event.sequence > snapshot.event_sequence
       );
       initializing = false;
       if (stateAdvancedDuringInitialization) await refreshServerState(client);
-      setOperatorName(settings.username);
+      setAuthenticatedPrincipal(connectionPrincipal);
+      setOperatorName(connectionPrincipal?.name || settings.username);
       setAuthToken(settings.token);
       setServerAddress(settings.serverAddress);
       setIsAuthenticated(true);
@@ -822,6 +893,92 @@ export default function App() {
     return client.request<TeamListenerCarrierDefinition[]>(TeamOperations.listenerCarrierList, {});
   };
 
+  const handleListSpeakers = async () => {
+    const listed = await requireTeamClient().request<TeamSpeaker[]>(TeamOperations.speakerList, {});
+    const sorted = sortSpeakers(listed);
+    setSpeakers(sorted);
+    setSessions(previous => previous.map(session => {
+      if (session.transport !== "speaker" || !session.transportUUID) return session;
+      const speaker = sorted.find(item => item.uuid === session.transportUUID);
+      return speaker ? { ...session, transportName: speaker.name } : session;
+    }));
+    return sorted;
+  };
+
+  const handleRefreshStreams = async () => {
+    const snapshot = await requireTeamClient().request<TeamSnapshot>(TeamOperations.systemSnapshot, {});
+    applySnapshot(snapshot);
+    const listed = sortStreams(snapshot.streams || []);
+    return listed;
+  };
+
+  const cacheSpeaker = (speaker: TeamSpeaker) => {
+    setSpeakers(previous => upsertSpeaker(previous, speaker));
+    setSessions(previous => previous.map(session =>
+      session.transport === "speaker" && session.transportUUID === speaker.uuid
+        ? { ...session, transportName: speaker.name }
+        : session
+    ));
+    return speaker;
+  };
+
+  const handleGetSpeaker = async (name: string) => {
+    const speaker = await requireTeamClient().request<TeamSpeaker>(TeamOperations.speakerGet, { name });
+    return cacheSpeaker(speaker);
+  };
+
+  const handleCreateSpeaker = async (request: TeamSpeakerCreateRequest) => {
+    try {
+      const speaker = await requireTeamClient().request<TeamSpeaker>(TeamOperations.speakerCreate, request);
+      return cacheSpeaker(speaker);
+    } catch (error) {
+      await handleGetSpeaker(request.name).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const handleUpdateSpeaker = async (request: TeamSpeakerUpdateRequest) => {
+    try {
+      const speaker = await requireTeamClient().request<TeamSpeaker>(TeamOperations.speakerUpdate, request);
+      return cacheSpeaker(speaker);
+    } catch (error) {
+      await handleGetSpeaker(request.name).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const mutateSpeakerLifecycle = async (
+    operation: typeof TeamOperations.speakerStart | typeof TeamOperations.speakerStop | typeof TeamOperations.speakerRestart,
+    name: string
+  ) => {
+    try {
+      // Start and restart synchronously wait for first blood and may legitimately
+      // run longer than the normal control-plane request timeout.
+      const requestTimeoutNanoseconds = speakers.find(speaker => speaker.name === name)?.config.client.request_timeout;
+      const firstBloodTimeout = requestTimeoutNanoseconds && Number.isSafeInteger(requestTimeoutNanoseconds)
+        ? Math.min(2_147_000_000, Math.ceil(requestTimeoutNanoseconds / 1_000_000) + 15_000)
+        : 60_000;
+      const timeout = operation === TeamOperations.speakerStop ? undefined : Math.max(60_000, firstBloodTimeout);
+      const speaker = await requireTeamClient().request<TeamSpeaker>(operation, { name }, timeout);
+      return cacheSpeaker(speaker);
+    } catch (error) {
+      await handleGetSpeaker(name).catch(() => undefined);
+      throw error;
+    }
+  };
+
+  const handleDeleteSpeaker = async (name: string) => {
+    try {
+      const deleted = await requireTeamClient().request<TeamSpeaker>(TeamOperations.speakerDelete, { name });
+      setSpeakers(previous => previous.filter(speaker => speaker.uuid !== deleted.uuid && speaker.name !== deleted.name));
+      setSpeakerEditorUUID(current => current === deleted.uuid ? null : current);
+      return deleted;
+    } catch (error) {
+      await handleGetSpeaker(name).catch(() => undefined);
+      throw error;
+    }
+  };
+
   const cacheListenerHostedConfiguration = (configuration: TeamListenerHostedConfiguration) => {
     setListenerHostedConfigurations(previous => upsertListenerHostedConfiguration(previous, configuration));
     setListeners(previous => previous.map(listener =>
@@ -920,10 +1077,17 @@ export default function App() {
     setLoots(previous => previous.filter(item => item.id !== (deleted.uuid || id)));
   };
 
-  const handleUpdateNote = (id: string, note: string) => {
-    sessionNotesRef.current[id] = note;
-    setSessions(previous => previous.map(session => session.id === id ? { ...session, note } : session));
+  const updateSessionAnnotations = async (request: TeamSessionUpdateRequest) => {
+    const updated = await requireTeamClient().request<TeamSession>(TeamOperations.sessionUpdate, request);
+    const mappedSession = mapTeamSession(updated, listeners, speakers);
+    setSessions(previous => previous.map(session => session.id === mappedSession.id ? mappedSession : session));
   };
+
+  const handleUpdateNote = (id: string, note: string) =>
+    updateSessionAnnotations({ name: id, note });
+
+  const handleUpdateColor = (id: string, color: string) =>
+    updateSessionAnnotations({ name: id, color });
 
   const executeSessionCommand = async (sessionId: string, commandLine: string) => {
     const client = clientRef.current;
@@ -1105,6 +1269,7 @@ export default function App() {
     clientRef.current.close();
     clientRef.current = null;
     setIsWsConnected(false);
+    setAuthenticatedPrincipal(null);
     addLog("system", `${TeamEvents.userLogout}: ${operatorName} · local connection closed`);
     setPackets(previous => retainPackets([createWebSocketSystemEvent("CLOSE", serverAddress), ...previous]));
   };
@@ -1114,6 +1279,8 @@ export default function App() {
     void connectToTeamServer({ username: operatorName, token: authToken, serverAddress })
       .catch(error => addLog("error", error instanceof Error ? error.message : String(error)));
   };
+
+  const canManageSpeakers = Boolean(authenticatedPrincipal?.admin);
 
   if (!isAuthenticated) {
     return (
@@ -1144,7 +1311,9 @@ export default function App() {
         onTriggerBuildManager={() => setIsBuildManagerOpen(true)}
         onTriggerProfileModal={() => setIsProfileManagerOpen(true)}
         onTriggerListenerModal={() => setIsListenerConfigurationOpen(true)}
+        onTriggerSpeakerModal={() => setSpeakerEditorUUID("")}
         onTriggerHostFileModal={() => setHostedFileEditor({})}
+        canManageSpeakers={canManageSpeakers}
         onTriggerSettingsModal={() => setIsSettingsOpen(true)}
         onTriggerAboutModal={() => setIsAboutOpen(true)}
       />
@@ -1163,6 +1332,7 @@ export default function App() {
             onSelectSession={(id) => setSelectedSessionId(id)}
             onInteract={handleInteract}
             onUpdateNote={handleUpdateNote}
+            onUpdateColor={handleUpdateColor}
             onKill={handleKillSession}
             onDelete={handleDeleteSession}
           />
@@ -1229,6 +1399,8 @@ export default function App() {
             onCloseTab={handleCloseTab}
             sessions={sessions}
             listeners={listeners}
+            speakers={speakers}
+            streams={streams}
             loots={loots}
             scripts={scripts}
             commands={commands}
@@ -1236,6 +1408,7 @@ export default function App() {
             packets={packets}
             users={users}
             hostedConfigurations={listenerHostedConfigurations}
+            canManageSpeakers={canManageSpeakers}
             onRefreshListeners={handleListListeners}
             onSetListenerState={handleListenerState}
             onRestartListener={handleRestartListener}
@@ -1244,6 +1417,14 @@ export default function App() {
             onRemoveListenerHosted={handleRemoveListenerHosted}
             onClearListenerHostedNotFound={handleClearListenerHostedNotFound}
             onOpenHostedFile={(target) => setHostedFileEditor(target || {})}
+            onListSpeakers={handleListSpeakers}
+            onStartSpeaker={name => mutateSpeakerLifecycle(TeamOperations.speakerStart, name)}
+            onStopSpeaker={name => mutateSpeakerLifecycle(TeamOperations.speakerStop, name)}
+            onRestartSpeaker={name => mutateSpeakerLifecycle(TeamOperations.speakerRestart, name)}
+            onDeleteSpeaker={handleDeleteSpeaker}
+            onCreateSpeaker={() => setSpeakerEditorUUID("")}
+            onEditSpeaker={speaker => setSpeakerEditorUUID(speaker.uuid)}
+            onRefreshStreams={handleRefreshStreams}
             onRefreshScripts={handleRefreshScripts}
             onLoadScript={handleLoadScript}
             onUnloadScript={handleUnloadScript}
@@ -1309,6 +1490,17 @@ export default function App() {
         onLoad={handleGetListenerHosted}
         onAdd={handleAddListenerHosted}
         onSetNotFound={handleSetListenerHostedNotFound}
+      />
+
+      <SpeakerConfiguration
+        isOpen={speakerEditorUUID !== null}
+        speaker={speakerEditorUUID ? speakers.find(speaker => speaker.uuid === speakerEditorUUID) : undefined}
+        profiles={profiles}
+        canManage={canManageSpeakers}
+        onClose={() => setSpeakerEditorUUID(null)}
+        onGet={handleGetSpeaker}
+        onCreate={handleCreateSpeaker}
+        onUpdate={handleUpdateSpeaker}
       />
 
       {/* 4. MODAL: Global C2 performance and configurations */}

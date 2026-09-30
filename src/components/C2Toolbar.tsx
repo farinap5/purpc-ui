@@ -28,7 +28,9 @@ interface ToolbarProps {
   onTriggerBuildManager: () => void;
   onTriggerProfileModal: () => void;
   onTriggerListenerModal: () => void;
+  onTriggerSpeakerModal: () => void;
   onTriggerHostFileModal: () => void;
+  canManageSpeakers: boolean;
   onTriggerSettingsModal: () => void;
   onTriggerAboutModal: () => void;
 }
@@ -66,7 +68,9 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
   onTriggerBuildManager,
   onTriggerProfileModal,
   onTriggerListenerModal,
+  onTriggerSpeakerModal,
   onTriggerHostFileModal,
+  canManageSpeakers,
   onTriggerSettingsModal,
   onTriggerAboutModal
 }) => {
@@ -85,6 +89,8 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
       { label: "Secrets", action: () => onAddTab("loots", "Secrets") },
       { label: "Downloaded Files", action: () => onAddTab("downloads", "Loot: Files") },
       { label: "Images", action: () => onAddTab("images", "Loot: Images") },
+      { label: "Speakers", action: () => onAddTab("speakers", "Speakers") },
+      { label: "Streams", action: () => onAddTab("streams", "Byte Streams") },
       { label: "Hosted Files", action: () => onAddTab("hosted_files", "Hosted Files") },
       { label: "Event Monitor", action: () => onAddTab("packets", "Event Monitor") }
     ],
@@ -98,6 +104,8 @@ export const C2Toolbar: React.FC<ToolbarProps> = ({
     ],
     "Server": [
       { label: "Listener", action: onTriggerListenerModal, disabled: !isWsConnected },
+      { label: "Speaker", action: onTriggerSpeakerModal, disabled: !isWsConnected || !canManageSpeakers },
+      { label: "Speakers", action: () => onAddTab("speakers", "Speakers") },
       { label: "Host File", action: onTriggerHostFileModal, disabled: !isWsConnected },
       { label: "Hosted Files", action: () => onAddTab("hosted_files", "Hosted Files") }
     ],

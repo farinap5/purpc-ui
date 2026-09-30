@@ -220,6 +220,10 @@ svg.lucide {
   transition: background-color 75ms ease;
 }
 
+.session-row.has-custom-color {
+  background: color-mix(in srgb, var(--session-row-color) 42%, var(--surface-1));
+}
+
 .session-row.is-killed {
   color: var(--text-dim);
   background: #1d1719;
@@ -274,11 +278,87 @@ svg.lucide {
   padding-bottom: 0 !important;
 }
 
-.session-context-action {
+.session-context-submenu-root {
+  position: relative;
+}
+
+.session-context-submenu-arrow {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+}
+
+.session-color-submenu {
+  position: absolute;
+  display: none;
+  top: -3px;
+  left: calc(100% - 1px);
+  width: 202px;
+  z-index: 51;
+}
+
+.session-color-submenu.is-left {
+  right: calc(100% - 1px);
+  left: auto;
+}
+
+.session-context-submenu-root:hover > .session-color-submenu,
+.session-context-submenu-root:focus-within > .session-color-submenu {
+  display: block;
+}
+
+.session-color-submenu > .session-color-palette {
+  border: 0;
+  padding: 4px;
+}
+
+.session-color-palette {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 7px 3px;
+}
+
+.session-context-menu .session-color-swatch {
+  width: 22px;
+  min-width: 22px;
+  padding: 2px !important;
+  border: 1px solid transparent;
+}
+
+.session-context-menu .session-color-swatch[aria-checked="true"] {
+  border-color: var(--text-strong);
+  background: var(--surface-3);
+}
+
+.session-color-chip {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  background: var(--session-color-swatch);
+}
+
+.session-context-menu .session-color-clear {
+  width: auto;
+  min-width: 36px;
+  flex: 1;
+  padding-right: 4px !important;
+  padding-left: 4px !important;
+}
+
+.session-annotation-status {
+  flex: 0 0 auto;
+  color: var(--danger);
+  border-top: 1px solid var(--border);
+}
+
+.session-context-menu .session-context-action {
   display: flex;
   width: 100%;
   cursor: pointer;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   border: 0;
   color: var(--text);
@@ -288,21 +368,21 @@ svg.lucide {
   text-align: left;
 }
 
-.session-context-action:hover {
+.session-context-menu .session-context-action:hover {
   color: var(--text-strong);
   background: var(--surface-3);
 }
 
-.session-context-action.is-danger {
+.session-context-menu .session-context-action.is-danger {
   color: #f5a0a6;
 }
 
-.session-context-action.is-danger:hover {
+.session-context-menu .session-context-action.is-danger:hover {
   color: #ffd2d5;
   background: var(--danger-surface);
 }
 
-.session-context-action:disabled {
+.session-context-menu .session-context-action:disabled {
   cursor: not-allowed;
   color: var(--text-dim);
   background: transparent;
@@ -2329,3 +2409,184 @@ svg.lucide {
 .hosted-files-grid th:nth-child(6) { width: 260px; }
 .hosted-files-grid th:nth-child(7) { width: 70px; }
 .hosted-files-grid th:nth-child(8) { width: 125px; }
+
+.speaker-configuration-form {
+  display: grid;
+  gap: 8px;
+}
+
+.speaker-configuration-form .collapsible-section-content {
+  padding: 8px;
+}
+
+.speaker-config-version {
+  margin-right: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.speaker-conflict-alert,
+.speaker-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+}
+
+.speaker-conflict-alert {
+  justify-content: space-between;
+}
+
+.speakers-panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.speaker-state-filter {
+  width: min(360px, 100%);
+}
+
+.speakers-status {
+  justify-content: space-between;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.speakers-grid {
+  min-width: 2020px;
+}
+
+.speaker-state,
+.session-liveness {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.speaker-state.is-connected,
+.session-liveness.is-healthy {
+  color: var(--accent-hover);
+}
+
+.speaker-state.is-connecting {
+  color: var(--warning);
+}
+
+.speaker-state.is-disconnected,
+.speaker-state.is-failed,
+.session-liveness.is-unavailable {
+  color: var(--danger);
+}
+
+.speaker-state.is-stopped,
+.session-liveness.is-unknown {
+  color: var(--text-dim);
+}
+
+.speaker-error-text {
+  display: block;
+  overflow: hidden;
+  max-width: 250px;
+  margin-top: 2px;
+  color: var(--danger);
+  font-size: 9px;
+  line-height: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row.is-liveness-unknown {
+  color: var(--text-muted);
+}
+
+.streams-panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.stream-state-filter {
+  width: min(360px, 100%);
+}
+
+.streams-status {
+  justify-content: space-between;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.streams-content {
+  overflow: hidden;
+}
+
+.streams-grid-scroll {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+
+.streams-grid {
+  min-width: 1660px;
+}
+
+.streams-grid th:nth-child(1) { width: 150px; }
+.streams-grid th:nth-child(2) { width: 90px; }
+.streams-grid th:nth-child(3) { width: 150px; }
+.streams-grid th:nth-child(4) { width: 180px; }
+.streams-grid th:nth-child(5) { width: 90px; }
+.streams-grid th:nth-child(6) { width: 100px; }
+.streams-grid th:nth-child(7) { width: 140px; }
+.streams-grid th:nth-child(8) { width: 105px; }
+.streams-grid th:nth-child(9) { width: 95px; }
+.streams-grid th:nth-child(10) { width: 165px; }
+.streams-grid th:nth-child(11) { width: 190px; }
+.streams-grid th:nth-child(12) { width: 175px; }
+
+.stream-detail-panel {
+  display: flex;
+  min-width: 300px;
+  flex: 0 0 min(360px, 35%);
+  flex-direction: column;
+  border-width: 0;
+}
+
+.stream-detail-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.stream-detail-body .desktop-property-grid {
+  grid-template-columns: 120px minmax(0, 1fr);
+}
+
+.stream-state {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.stream-state.is-waiting_implant,
+.stream-state.is-waiting_consumer {
+  color: var(--warning);
+}
+
+.stream-state.is-bridging {
+  color: var(--accent-hover);
+}
+
+.stream-state.is-closed {
+  color: var(--text-dim);
+}
+
+.stream-state.is-expired,
+.stream-state.is-failed,
+.stream-error-text {
+  color: var(--danger);
+}

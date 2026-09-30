@@ -165,7 +165,7 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
                 }}
               >
                 {profiles.length === 0 && <option value="">No profiles available</option>}
-                {profiles.map(profile => <option key={profile.name} value={profile.name}>{profile.name}</option>)}
+                {profiles.map(profile => <option key={profile.name} value={profile.name}>{profile.name} — {profile.mode || "reverse"}</option>)}
               </CompactSelect>
             </CompactFormRow>
 
@@ -220,6 +220,7 @@ export const PayloadGenerator: React.FC<PayloadGeneratorProps> = ({
           {activeProfile && (
               <dl className="desktop-property-grid">
                 <dt className="text-gray-500">Type</dt><dd>{activeProfile.type}</dd>
+                <dt className="text-gray-500">Mode</dt><dd>{activeProfile.mode || "reverse"}</dd>
                 <dt className="text-gray-500">Target</dt><dd>{activeProfile.os} / {activeProfile.arch}</dd>
                 <dt className="text-gray-500">LHOST</dt><dd>{activeProfile.lhost}</dd>
                 <dt className="text-gray-500">Output</dt><dd>{activeProfile.output}</dd>

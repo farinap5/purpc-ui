@@ -2,6 +2,8 @@ export type ConsoleTabType =
   | "event_log"
   | "sessions"
   | "listeners"
+  | "speakers"
+  | "streams"
   | "hosted_files"
   | "loots"
   | "downloads"
@@ -23,8 +25,14 @@ export interface Session {
   extIp: string;
   intIp: string;
   listener: string;
+  transport: "listener" | "speaker";
+  transportName: string;
+  transportUUID: string;
+  liveness: "healthy" | "unavailable" | "unknown";
+  healthMonitoring: boolean;
   user: string;
   computer: string;
+  color: string;
   note: string;
   process: string;
   pid: number;

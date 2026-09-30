@@ -3,6 +3,8 @@ export const TEAM_API_SUBPROTOCOL = "purpcmd.v1";
 export const TEAM_API_BROWSER_AUTH_PREFIX = "purpcmd.auth.";
 export const MAX_CONTROL_MESSAGE_BYTES = 1 << 20;
 export const MAX_TRAFFIC_PREVIEW_BYTES = 16 << 10;
+export const MAX_SESSION_COLOR_BYTES = 64;
+export const MAX_SESSION_NOTE_BYTES = 4 << 10;
 const REPLAY_PAGE_EVENT_LIMIT = 50;
 const MAX_REPLAY_EVENTS = 1000;
 const MAX_REPLAY_TRANSFER_BYTES = 4 << 20;
@@ -27,6 +29,15 @@ export const TeamOperations = {
   listenerTypeList: "ask.listener-type.list",
   listenerTypeGet: "ask.listener-type.get",
   listenerCarrierList: "ask.listener-carrier.list",
+  speakerList: "ask.speaker.list",
+  speakerGet: "ask.speaker.get",
+  speakerCreate: "ask.speaker.create",
+  speakerUpdate: "ask.speaker.update",
+  speakerStart: "ask.speaker.start",
+  speakerStop: "ask.speaker.stop",
+  speakerRestart: "ask.speaker.restart",
+  speakerDelete: "ask.speaker.delete",
+  sessionUpdate: "ask.session.update",
   sessionTerminate: "ask.session.terminate",
   sessionDelete: "ask.session.delete",
   commandExecute: "ask.command.execute",
@@ -56,6 +67,7 @@ export const TeamOperations = {
 } as const;
 
 export const TeamEvents = {
+  sessionUpdated: "evt.session.updated",
   sessionOutput: "evt.session.output",
   listenerCreated: "evt.listener.created",
   listenerUpdated: "evt.listener.updated",
@@ -66,6 +78,21 @@ export const TeamEvents = {
   listenerFailed: "evt.listener.failed",
   listenerDeleted: "evt.listener.deleted",
   listenerHostedUpdated: "evt.listener.hosted.updated",
+  speakerCreated: "evt.speaker.created",
+  speakerUpdated: "evt.speaker.updated",
+  speakerConnecting: "evt.speaker.connecting",
+  speakerConnected: "evt.speaker.connected",
+  speakerDisconnected: "evt.speaker.disconnected",
+  speakerFailed: "evt.speaker.failed",
+  speakerStopped: "evt.speaker.stopped",
+  speakerDeleted: "evt.speaker.deleted",
+  streamCreated: "evt.stream.created",
+  streamImplantAttached: "evt.stream.implant-attached",
+  streamConsumerAttached: "evt.stream.consumer-attached",
+  streamReady: "evt.stream.ready",
+  streamClosed: "evt.stream.closed",
+  streamExpired: "evt.stream.expired",
+  streamFailed: "evt.stream.failed",
   profileCreated: "evt.profile.created",
   profileUpdated: "evt.profile.updated",
   profileDeleted: "evt.profile.deleted",
@@ -245,10 +272,114 @@ export interface TeamListenerHostedNotFoundClearRequest {
   expected_config_version?: number;
 }
 
+export type TeamSpeakerState = "stopped" | "connecting" | "connected" | "disconnected" | "failed";
+
+export interface TeamSpeakerHealthcheckConfig {
+  enabled?: boolean;
+  interval?: number;
+  failure_threshold?: number;
+}
+
+export interface TeamSpeakerRetryConfig {
+  interval?: number;
+}
+
+export interface TeamSpeakerTLSConfig {
+  server_name?: string;
+  root_ca_file?: string;
+  client_cert_file?: string;
+  client_key_file?: string;
+  spki_sha256_pins?: string[];
+  min_version?: "1.2" | "TLS1.2" | "tls1.2" | "1.3" | "TLS1.3" | "tls1.3";
+  insecure_skip_verify?: boolean;
+}
+
+export interface TeamSpeakerHTTPClientConfig {
+  base_url: string;
+  host?: string;
+  headers?: Record<string, string[]>;
+  query?: Record<string, string[]>;
+  cookies?: Record<string, string>;
+  proxy_url?: string;
+  use_environment_proxy?: boolean;
+  follow_redirects?: boolean;
+  allow_cross_origin_redirects?: boolean;
+  max_redirects?: number;
+  request_timeout?: number;
+  dial_timeout?: number;
+  tls_handshake_timeout?: number;
+  response_header_timeout?: number;
+  idle_connection_timeout?: number;
+  max_request_bytes?: number;
+  max_response_bytes?: number;
+  max_response_header_bytes?: number;
+  max_idle_connections?: number;
+  max_idle_per_host?: number;
+  disable_compression?: boolean;
+  reuse_connections?: boolean;
+  tls?: TeamSpeakerTLSConfig;
+}
+
+export interface TeamSpeakerHTTPRequestConfig {
+  method?: string;
+  path?: string;
+  host?: string;
+  headers?: Record<string, string[]>;
+  query?: Record<string, string[]>;
+  cookies?: Record<string, string>;
+  expected_status?: number[];
+}
+
+export interface TeamSpeakerConfig {
+  profile?: string;
+  client: TeamSpeakerHTTPClientConfig;
+  request: TeamSpeakerHTTPRequestConfig;
+  healthcheck?: TeamSpeakerHealthcheckConfig;
+  retry?: TeamSpeakerRetryConfig;
+}
+
+export interface TeamSpeaker {
+  name: string;
+  uuid: string;
+  running: boolean;
+  in_flight: boolean;
+  persistent: boolean;
+  state: TeamSpeakerState;
+  desired_state: "stopped" | "running";
+  config_version: number;
+  associations: number;
+  session?: string;
+  last_attempt_at?: string;
+  last_success_at?: string;
+  last_error?: string;
+  config: TeamSpeakerConfig;
+}
+
+export interface TeamSpeakerCreateRequest {
+  name: string;
+  persistent?: boolean;
+  config: TeamSpeakerConfig;
+}
+
+export interface TeamSpeakerUpdateRequest {
+  name: string;
+  new_name?: string;
+  persistent?: boolean;
+  config?: TeamSpeakerConfig;
+  expected_config_version?: number;
+}
+
 export interface TeamSession {
   name: string;
   uuid: string;
+  color: string;
+  note: string;
   payload_type: string;
+  transport: "listener" | "speaker";
+  speaker?: string;
+  speaker_uuid?: string;
+  listener?: string;
+  listener_uuid?: string;
   user: string;
   hostname: string;
   process: string;
@@ -256,9 +387,45 @@ export interface TeamSession {
   pid: number;
   sleep: number;
   alive: boolean;
+  liveness: "healthy" | "unavailable" | "unknown";
+  health_monitoring: boolean;
   terminating: boolean;
   first_seen: string;
   last_seen: string;
+}
+
+export interface TeamSessionUpdateRequest {
+  name: string;
+  color?: string;
+  note?: string;
+}
+
+export type TeamStreamState =
+  | "waiting_implant"
+  | "waiting_consumer"
+  | "bridging"
+  | "closed"
+  | "expired"
+  | "failed";
+
+export interface TeamStream {
+  id: string;
+  session: string;
+  task_id?: string;
+  service: string;
+  command?: string;
+  local_address: string;
+  local_host: string;
+  local_port: number;
+  state: TeamStreamState;
+  created_at: string;
+  expires_at?: string;
+  implant_attached_at?: string;
+  consumer_attached_at?: string;
+  closed_at?: string;
+  bytes_from_implant?: number;
+  bytes_to_implant?: number;
+  error?: string;
 }
 
 export interface TeamCommand {
@@ -292,6 +459,7 @@ export interface TeamProfile {
   name: string;
   listener_uuid: string;
   type: string;
+  mode: "reverse" | "bind";
   lhost: string;
   os: string;
   arch: string;
@@ -308,10 +476,13 @@ export interface TeamProfile {
   definition_updated_at?: string;
   output: string;
   public_key: string;
+  template?: string;
+  builder?: string;
 }
 
 export type TeamProfileUpdateKey =
   | "TYPE"
+  | "MODE"
   | "LHOST"
   | "OS"
   | "ARCH"
@@ -383,12 +554,14 @@ export interface TeamUserMessage {
 
 export interface TeamSnapshot {
   listeners: TeamListener[];
+  speakers: TeamSpeaker[];
   sessions: TeamSession[];
   scripts: TeamScript[];
   profiles: TeamProfile[];
   builds: TeamBuild[];
   commands: TeamCommand[];
   users: TeamUser[];
+  streams?: TeamStream[];
   event_sequence: number;
 }
 
@@ -481,6 +654,22 @@ const createID = () => {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 };
 
+const TEAM_CLIENT_ID_STORAGE_KEY = "purpcmd.client_id";
+let fallbackClientID = "";
+
+const stableClientID = () => {
+  try {
+    const stored = window.localStorage.getItem(TEAM_CLIENT_ID_STORAGE_KEY)?.trim();
+    if (stored) return stored;
+    const created = createID();
+    window.localStorage.setItem(TEAM_CLIENT_ID_STORAGE_KEY, created);
+    return created;
+  } catch {
+    if (!fallbackClientID) fallbackClientID = createID();
+    return fallbackClientID;
+  }
+};
+
 const encodeBrowserAuthToken = (token: string) => {
   const bytes = new TextEncoder().encode(token);
   let binary = "";
@@ -528,7 +717,7 @@ const extractEnvelopeID = (raw: string) => raw
 
 export class TeamServerClient {
   private readonly config: Required<Pick<TeamServerClientConfig, "serverAddress" | "token" | "timeoutMs">> & TeamServerClientConfig;
-  private readonly clientID = createID();
+  private readonly clientID = stableClientID();
   private readonly pending = new Map<string, PendingRequest>();
   private socket: WebSocket | null = null;
   private lastSequence: number;
@@ -602,7 +791,7 @@ export class TeamServerClient {
     return { hello, snapshot };
   }
 
-  async request<T>(operation: string, data: unknown): Promise<T> {
+  async request<T>(operation: string, data: unknown, timeoutMs?: number): Promise<T> {
     const id = createID();
     const envelope: TeamEnvelope = {
       version: TEAM_API_VERSION,
@@ -620,7 +809,7 @@ export class TeamServerClient {
     if (!this.connected) {
       throw new Error("Not connected to the teamserver. Reconnect to restore event continuity before retrying the request.");
     }
-    return this.requestOnce<T>(id, operation, raw);
+    return this.requestOnce<T>(id, operation, raw, timeoutMs ?? this.config.timeoutMs);
   }
 
   async download(remotePath: string): Promise<Blob> {
@@ -644,7 +833,7 @@ export class TeamServerClient {
     return response.blob();
   }
 
-  private requestOnce<T>(id: string, operation: string, raw: string): Promise<T> {
+  private requestOnce<T>(id: string, operation: string, raw: string, timeoutMs: number): Promise<T> {
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("Not connected to the teamserver."));
@@ -654,7 +843,7 @@ export class TeamServerClient {
       const timeout = window.setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Teamserver request timed out: ${operation}`));
-      }, this.config.timeoutMs);
+      }, timeoutMs);
       this.pending.set(id, {
         resolve: value => resolve(value as T),
         reject,

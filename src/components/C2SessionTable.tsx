@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Session } from "../types";
+import { MAX_SESSION_NOTE_BYTES } from "../api/teamApi";
 import { 
-  Terminal, 
+  Terminal,
+  ChevronRight,
+  Palette,
   Trash2, 
   Edit3, 
-  Monitor
+  Monitor,
+  Server
 } from "lucide-react";
 import {
   CompactButton,
@@ -12,7 +16,8 @@ import {
   CompactInput,
   CompactScrollbar,
   DataGrid,
-  DesktopPanel
+  DesktopPanel,
+  StatusBar
 } from "./desktop";
 
 interface SessionTableProps {
@@ -20,7 +25,8 @@ interface SessionTableProps {
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   onInteract: (session: Session) => void;
-  onUpdateNote: (id: string, note: string) => void;
+  onUpdateNote: (id: string, note: string) => Promise<void>;
+  onUpdateColor: (id: string, color: string) => Promise<void>;
   onKill: (id: string) => void;
   onDelete: (id: string) => void;
 }
@@ -31,6 +37,9 @@ type SessionColumnKey =
   | "extIp"
   | "intIp"
   | "listener"
+  | "transport"
+  | "association"
+  | "liveness"
   | "user"
   | "computer"
   | "note"
@@ -41,11 +50,14 @@ type SessionColumnKey =
   | "sleep";
 
 const sessionColumns: Array<{ key: SessionColumnKey; label: string; accessibleLabel: string }> = [
-  { key: "type", label: "", accessibleLabel: "Operating system" },
+  { key: "type", label: "", accessibleLabel: "Session transport" },
   { key: "id", label: "Session ID", accessibleLabel: "Session ID" },
   { key: "extIp", label: "Socket", accessibleLabel: "Remote socket" },
   { key: "intIp", label: "UUID", accessibleLabel: "Session UUID" },
   { key: "listener", label: "Payload", accessibleLabel: "Payload type" },
+  { key: "transport", label: "Transport", accessibleLabel: "Transport type" },
+  { key: "association", label: "Association", accessibleLabel: "Listener or speaker association" },
+  { key: "liveness", label: "Liveness", accessibleLabel: "Session liveness" },
   { key: "user", label: "User", accessibleLabel: "User" },
   { key: "computer", label: "Computer", accessibleLabel: "Computer" },
   { key: "note", label: "Note", accessibleLabel: "Note" },
@@ -62,6 +74,9 @@ const initialColumnWidths: Record<SessionColumnKey, number> = {
   extIp: 130,
   intIp: 130,
   listener: 135,
+  transport: 85,
+  association: 150,
+  liveness: 90,
   user: 120,
   computer: 150,
   note: 240,
@@ -78,6 +93,9 @@ const minimumColumnWidths: Record<SessionColumnKey, number> = {
   extIp: 90,
   intIp: 90,
   listener: 90,
+  transport: 70,
+  association: 100,
+  liveness: 75,
   user: 80,
   computer: 100,
   note: 140,
@@ -87,6 +105,19 @@ const minimumColumnWidths: Record<SessionColumnKey, number> = {
   last: 55,
   sleep: 90
 };
+
+const sessionColorOptions = [
+  { label: "Forest", value: "#4f8a62" },
+  { label: "Teal", value: "#4f8a8a" },
+  { label: "Ochre", value: "#a6843d" },
+  { label: "Copper", value: "#a5653f" },
+  { label: "Olive", value: "#7c8448" },
+  { label: "Graphite", value: "#777d89" }
+] as const;
+
+const utf8ByteLength = (value: string) => new TextEncoder().encode(value).byteLength;
+
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 const formatLastActive = (value: number) => {
   const totalSeconds = Math.max(0, Math.floor(value));
@@ -99,23 +130,13 @@ const formatLastActive = (value: number) => {
   return `${seconds}s`;
 };
 
-const getSleepSeconds = (session: Session) => {
-  if (session.sleepSeconds !== undefined) return session.sleepSeconds;
-
-  const value = Number.parseFloat(session.sleep);
-  if (!Number.isFinite(value)) return 0;
-  const unit = session.sleep.toLowerCase();
-  if (unit.includes("hour")) return value * 3600;
-  if (unit.includes("minute")) return value * 60;
-  return value;
-};
-
 export const C2SessionTable: React.FC<SessionTableProps> = ({
   sessions,
   selectedSessionId,
   onSelectSession,
   onInteract,
   onUpdateNote,
+  onUpdateColor,
   onKill,
   onDelete
 }) => {
@@ -127,6 +148,8 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
 
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteValue, setNoteValue] = useState("");
+  const [pendingAnnotation, setPendingAnnotation] = useState<string | null>(null);
+  const [annotationError, setAnnotationError] = useState("");
   const [columnWidths, setColumnWidths] = useState(initialColumnWidths);
   const [clockNow, setClockNow] = useState(Date.now());
   const tableContainerRef = useRef<HTMLDivElement | null>(null);
@@ -280,6 +303,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
 
   const handleContextMenu = (e: React.MouseEvent, sessionId: string) => {
     e.preventDefault();
+    setAnnotationError("");
     onSelectSession(sessionId);
     setContextMenu({
       x: e.clientX,
@@ -289,18 +313,47 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
   };
 
   const startEditingNote = (session: Session) => {
+    setAnnotationError("");
     setEditingNoteId(session.id);
     setNoteValue(session.note);
   };
 
-  const saveNote = (id: string) => {
-    onUpdateNote(id, noteValue);
-    setEditingNoteId(null);
+  const saveNote = async (id: string) => {
+    if (utf8ByteLength(noteValue) > MAX_SESSION_NOTE_BYTES) {
+      setAnnotationError("Notes may not exceed " + MAX_SESSION_NOTE_BYTES + " UTF-8 bytes.");
+      return;
+    }
+
+    setPendingAnnotation("note:" + id);
+    setAnnotationError("");
+    try {
+      await onUpdateNote(id, noteValue);
+      setEditingNoteId(null);
+    } catch (error) {
+      setAnnotationError("Unable to save note: " + errorMessage(error));
+    } finally {
+      setPendingAnnotation(null);
+    }
   };
 
-  // Uniform computer icon for session rows
-  const getOsIcon = () => {
-    return <Monitor className="w-3.5 h-3.5 text-gray-400 inline-block" />;
+  const updateColor = async (id: string, color: string) => {
+    setPendingAnnotation("color:" + id);
+    setAnnotationError("");
+    try {
+      await onUpdateColor(id, color);
+      setContextMenu(null);
+    } catch (error) {
+      setAnnotationError("Unable to save color: " + errorMessage(error));
+    } finally {
+      setPendingAnnotation(null);
+    }
+  };
+
+  const getSessionIcon = (session: Session) => {
+    const Icon = session.transport === "speaker" ? Server : Monitor;
+    const label = session.transport === "speaker" ? "Speaker session" : "Listener session";
+
+    return <Icon aria-label={label} className="w-3.5 h-3.5 text-gray-400 inline-block" />;
   };
 
   const contextSession = contextMenu
@@ -340,10 +393,10 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
               const lastActive = session.lastSeenAt !== undefined
                 ? Math.max(0, Math.floor((clockNow - session.lastSeenAt) / 1000))
                 : session.lastActive;
-              const sleepSeconds = getSleepSeconds(session);
-              const unhealthyThreshold = sleepSeconds * 1.5;
-              const isUnhealthy = !isKilled && sleepSeconds > 0 && lastActive > unhealthyThreshold;
+              const isUnhealthy = !isKilled && session.liveness === "unavailable";
+              const isLivenessUnknown = !isKilled && session.liveness === "unknown";
               const lastDisplay = formatLastActive(lastActive);
+              const hasCustomColor = session.color.trim().length > 0;
 
               return (
                 <tr
@@ -352,14 +405,19 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                   onDoubleClick={() => !isKilled && onInteract(session)}
                   onContextMenu={(e) => handleContextMenu(e, session.id)}
                   aria-selected={isSelected}
+                  style={hasCustomColor ? ({ "--session-row-color": session.color } as React.CSSProperties) : undefined}
                   title={isUnhealthy
-                    ? `Session unhealthy: no callback for ${lastDisplay} (threshold ${formatLastActive(unhealthyThreshold)})`
-                    : undefined}
-                  className={`session-row ${
+                    ? `Session liveness is unavailable; last protocol exchange was ${lastDisplay} ago.`
+                    : isLivenessUnknown
+                      ? "Session liveness is unknown because background speaker health monitoring is disabled. Task delivery remains enabled."
+                      : undefined}
+                  className={`session-row ${hasCustomColor ? "has-custom-color" : ""} ${
                     isKilled
                       ? "is-killed"
                       : isUnhealthy
                         ? "is-unhealthy"
+                        : isLivenessUnknown
+                          ? "is-liveness-unknown"
                         : isSelected
                           ? "is-selected"
                           : ""
@@ -367,7 +425,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                 >
                   {/* type */}
                   <td className="px-2 py-0.5 border-r border-[#282828] text-center">
-                    {getOsIcon()}
+                    {getSessionIcon(session)}
                   </td>
 
                   {/* session id */}
@@ -389,6 +447,18 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                   <td className="px-2 py-0.5 border-r border-[#282828]">
                     {session.listener}
                   </td>
+
+                  <td className="px-2 py-0.5 border-r border-[#282828]">
+                    {session.transport}
+                  </td>
+
+                  <td className="px-2 py-0.5 border-r border-[#282828]" title={session.transportUUID || undefined}>
+                    {session.transportName}
+                  </td>
+
+                  <td className={`px-2 py-0.5 border-r border-[#282828] session-liveness is-${session.liveness}`}>
+                    {session.liveness}
+                  </td>
                   
                   {/* user */}
                   <td className="px-2 py-0.5 border-r border-[#282828]">
@@ -408,12 +478,19 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                           type="text"
                           value={noteValue}
                           onChange={(e) => setNoteValue(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && saveNote(session.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveNote(session.id);
+                            if (e.key === "Escape") setEditingNoteId(null);
+                          }}
+                          disabled={pendingAnnotation === "note:" + session.id}
+                          maxLength={MAX_SESSION_NOTE_BYTES}
                           className="session-note-input"
                           autoFocus
                         />
                         <CompactButton
-                          onClick={() => saveNote(session.id)} 
+                          type="button"
+                          disabled={pendingAnnotation === "note:" + session.id}
+                          onClick={() => void saveNote(session.id)}
                         >
                           Save
                         </CompactButton>
@@ -471,16 +548,17 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
         </DataGrid>
       </CompactScrollbar>
 
-      {/* Context Menu Overlay - All icons uniform text-gray-400 */}
+      {/* Context Menu */}
       {contextMenu && (
         <div
           style={{ top: contextMenu.y - 10, left: contextMenu.x + 5 }}
           className="session-context-menu"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Section 1: Interaction */}
-          <div className="py-1">
-            <button
+          <div>
+            <CompactButton
+              type="button"
+              variant="ghost"
               disabled={contextSession?.status === "killed"}
               onClick={() => {
                 if (contextSession && contextSession.status !== "killed") onInteract(contextSession);
@@ -490,27 +568,80 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
             >
               <Terminal className="w-3.5 h-3.5 text-gray-400" />
               <span>Interact (Terminal)</span>
-            </button>
+            </CompactButton>
           </div>
 
-          {/* Session-local presentation actions */}
-          <div className="py-1">
-            <button
+          <div>
+            <CompactButton
+              type="button"
+              variant="ghost"
               onClick={() => {
-                const b = sessions.find(x => x.id === contextMenu.sessionId);
-                if (b) startEditingNote(b);
+                if (contextSession) startEditingNote(contextSession);
                 setContextMenu(null);
               }}
               className="session-context-action"
             >
               <Edit3 className="w-3.5 h-3.5 text-gray-400" />
               <span>Add custom note...</span>
-            </button>
+            </CompactButton>
           </div>
 
-          {/* Kill/Delete */}
-          <div className="py-1">
-            <button
+          <div className="session-context-submenu-root">
+            <CompactButton
+              type="button"
+              variant="ghost"
+              className="session-context-action"
+              aria-haspopup="menu"
+              disabled={pendingAnnotation === "color:" + contextMenu.sessionId}
+            >
+              <Palette className="w-3.5 h-3.5 text-gray-400" />
+              <span>Color</span>
+              <ChevronRight className="session-context-submenu-arrow" />
+            </CompactButton>
+
+            <div
+              className={"session-context-menu session-color-submenu" + (
+                contextMenu.x + 445 > window.innerWidth ? " is-left" : ""
+              )}
+              role="menu"
+              aria-label="Session colors"
+            >
+              <div className="session-color-palette" role="group">
+                {sessionColorOptions.map(option => (
+                  <CompactButton
+                    key={option.value}
+                    type="button"
+                    variant="ghost"
+                    className="session-color-swatch"
+                    style={{ "--session-color-swatch": option.value } as React.CSSProperties}
+                    role="menuitemradio"
+                    aria-label={"Set session color to " + option.label}
+                    aria-checked={contextSession?.color === option.value}
+                    title={option.label}
+                    disabled={pendingAnnotation === "color:" + contextMenu.sessionId}
+                    onClick={() => void updateColor(contextMenu.sessionId, option.value)}
+                  >
+                    <span className="session-color-chip" aria-hidden="true" />
+                  </CompactButton>
+                ))}
+                <CompactButton
+                  type="button"
+                  variant="ghost"
+                  className="session-color-clear"
+                  role="menuitem"
+                  disabled={!contextSession?.color || pendingAnnotation === "color:" + contextMenu.sessionId}
+                  onClick={() => void updateColor(contextMenu.sessionId, "")}
+                >
+                  Clear
+                </CompactButton>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <CompactButton
+              type="button"
+              variant="ghost"
               disabled={contextSession?.status === "killed"}
               onClick={() => {
                 onKill(contextMenu.sessionId);
@@ -520,8 +651,10 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
             >
               <Trash2 className="w-3.5 h-3.5 text-gray-400" />
               <span>Kill Session</span>
-            </button>
-            <button
+            </CompactButton>
+            <CompactButton
+              type="button"
+              variant="danger"
               onClick={() => {
                 onDelete(contextMenu.sessionId);
                 setContextMenu(null);
@@ -530,10 +663,16 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
             >
               <Trash2 className="w-3.5 h-3.5 text-red-400" />
               <span>Delete Session</span>
-            </button>
+            </CompactButton>
           </div>
         </div>
       )}
+
+      {annotationError ? (
+        <StatusBar className="session-annotation-status">
+          <span role="alert">{annotationError}</span>
+        </StatusBar>
+      ) : null}
     </DesktopPanel>
   );
 };

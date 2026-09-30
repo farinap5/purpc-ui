@@ -13,6 +13,8 @@ import {
   TeamListenerHostedConfiguration,
   TeamListenerHostedNotFoundClearRequest,
   TeamListenerHostedRemoveRequest,
+  TeamSpeaker,
+  TeamStream,
   TeamUser,
   TeamUserCredentials,
   TeamUserMessage
@@ -22,6 +24,8 @@ import { createLootContentPreview, imageMimeType, LootContentPreview } from "../
 import { UserManager } from "./UserManager";
 import { HostedFilesPanel } from "./HostedFilesPanel";
 import type { HostedFileEditorTarget } from "./HostedFileModal";
+import { SpeakersPanel } from "./SpeakersPanel";
+import { StreamsPanel } from "./StreamsPanel";
 import {
   CompactButton,
   CompactFormRow,
@@ -50,6 +54,8 @@ interface C2ConsoleProps {
   
   sessions: Session[];
   listeners: Listener[];
+  speakers: TeamSpeaker[];
+  streams: TeamStream[];
   loots: Loot[];
   scripts: Script[];
   commands: Command[];
@@ -57,6 +63,7 @@ interface C2ConsoleProps {
   packets: Packet[];
   users: TeamUser[];
   hostedConfigurations: ListenerHostedConfigurationMap;
+  canManageSpeakers: boolean;
   
   onRefreshListeners: () => Promise<Listener[]>;
   onSetListenerState: (name: string, start: boolean) => Promise<void>;
@@ -66,6 +73,14 @@ interface C2ConsoleProps {
   onRemoveListenerHosted: (request: TeamListenerHostedRemoveRequest) => Promise<TeamListenerHostedConfiguration>;
   onClearListenerHostedNotFound: (request: TeamListenerHostedNotFoundClearRequest) => Promise<TeamListenerHostedConfiguration>;
   onOpenHostedFile: (target?: HostedFileEditorTarget) => void;
+  onListSpeakers: () => Promise<TeamSpeaker[]>;
+  onStartSpeaker: (name: string) => Promise<TeamSpeaker>;
+  onStopSpeaker: (name: string) => Promise<TeamSpeaker>;
+  onRestartSpeaker: (name: string) => Promise<TeamSpeaker>;
+  onDeleteSpeaker: (name: string) => Promise<TeamSpeaker>;
+  onCreateSpeaker: () => void;
+  onEditSpeaker: (speaker: TeamSpeaker) => void;
+  onRefreshStreams: () => Promise<TeamStream[]>;
   onRefreshScripts: () => Promise<Script[]>;
   onLoadScript: (path: string) => Promise<Script>;
   onUnloadScript: (path: string) => Promise<void>;
@@ -92,6 +107,8 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   onCloseTab,
   sessions,
   listeners,
+  speakers,
+  streams,
   loots,
   scripts,
   commands,
@@ -99,6 +116,7 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   packets,
   users,
   hostedConfigurations,
+  canManageSpeakers,
   onRefreshListeners,
   onSetListenerState,
   onRestartListener,
@@ -107,6 +125,14 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
   onRemoveListenerHosted,
   onClearListenerHostedNotFound,
   onOpenHostedFile,
+  onListSpeakers,
+  onStartSpeaker,
+  onStopSpeaker,
+  onRestartSpeaker,
+  onDeleteSpeaker,
+  onCreateSpeaker,
+  onEditSpeaker,
+  onRefreshStreams,
   onRefreshScripts,
   onLoadScript,
   onUnloadScript,
@@ -332,11 +358,10 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     // Keep the configured address as the display fallback.
   }
 
-  const handleCommandSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!commandInput.trim() || !activeTab) return;
+  const submitCommand = async (commandLine: string) => {
+    if (!commandLine.trim() || !activeTab) return;
 
-    const currentCommand = commandInput.trim();
+    const currentCommand = commandLine.trim();
     setHistory(prev => [...prev, currentCommand]);
     setHistoryIdx(-1);
     setCommandInput("");
@@ -441,6 +466,11 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
     }
   };
 
+  const handleCommandSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitCommand(commandInput);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowUp") {
       e.preventDefault();
@@ -486,21 +516,23 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
           <DataGrid aria-label="Active sessions" className="console-session-grid">
             <thead>
               <tr>
-                <th>Name</th><th>User</th><th>Computer</th><th>Payload</th><th>Process</th><th>Status</th>
+                <th>Name</th><th>User</th><th>Computer</th><th>Payload</th><th>Transport</th><th>Association</th><th>Process</th><th>Liveness</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
               {sessions.map(session => (
                 <tr key={session.id}>
                   <td>{session.id}</td><td>{session.user}</td><td>{session.computer}</td><td>{session.listener}</td>
+                  <td>{session.transport}</td><td title={session.transportUUID || undefined}>{session.transportName}</td>
                   <td>{session.process} ({session.pid})</td>
+                  <td className={`session-liveness is-${session.liveness}`}>{session.liveness}</td>
                   <td className={`session-status ${
                     session.status === "active" ? "is-active" : session.status === "killed" ? "is-killed" : "is-lost"
                   }`}>{session.status}</td>
                 </tr>
               ))}
               {sessions.length === 0 && (
-                <tr><td colSpan={6} className="empty-grid-cell">No sessions are registered.</td></tr>
+                <tr><td colSpan={9} className="empty-grid-cell">No sessions are registered.</td></tr>
               )}
             </tbody>
           </DataGrid>
@@ -601,8 +633,9 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
                   key={`${command.payloadType}-${command.name}`}
                   type="button"
                   onClick={() => setCommandInput(`${command.name} `)}
+                  onDoubleClick={() => void submitCommand(command.name)}
                   className="available-command-row"
-                  title={command.description}
+                  title={`${command.description} Click to fill the prompt; double-click to send.`}
                 >
                   <strong>{command.name}</strong>
                   <span>{command.description}</span>
@@ -1272,6 +1305,29 @@ export const C2Console: React.FC<C2ConsoleProps> = ({
         return activeTab.sessionId ? renderSessionTerminal(activeTab.sessionId) : renderUnavailablePanel();
       case "listeners":
         return renderListeners();
+      case "speakers":
+        return (
+          <SpeakersPanel
+            speakers={speakers}
+            isConnected={isWsConnected}
+            canManage={canManageSpeakers}
+            onList={onListSpeakers}
+            onStart={onStartSpeaker}
+            onStop={onStopSpeaker}
+            onRestart={onRestartSpeaker}
+            onDelete={onDeleteSpeaker}
+            onCreate={onCreateSpeaker}
+            onEdit={onEditSpeaker}
+          />
+        );
+      case "streams":
+        return (
+          <StreamsPanel
+            streams={streams}
+            isConnected={isWsConnected}
+            onRefresh={onRefreshStreams}
+          />
+        );
       case "hosted_files":
         return (
           <HostedFilesPanel

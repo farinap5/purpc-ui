@@ -37,6 +37,7 @@ type EditableProfileKey = Exclude<
   keyof TeamProfile,
   | "name"
   | "listener_uuid"
+  | "mode"
   | "os_options"
   | "arch_options"
   | "protocol"
@@ -48,12 +49,15 @@ type EditableProfileKey = Exclude<
   | "config_version"
   | "definition_created_at"
   | "definition_updated_at"
+  | "template"
+  | "builder"
 >;
 
 const defaultProfile = (): TeamProfile => ({
   name: "",
   listener_uuid: "",
   type: "impl",
+  mode: "reverse",
   lhost: "",
   os: "linux",
   arch: "amd64",
@@ -85,6 +89,7 @@ const sortProfiles = (profiles: TeamProfile[]) => [...profiles].sort((left, righ
 
 const profileRevision = (profile: TeamProfile) => JSON.stringify({
   listener_uuid: profile.listener_uuid || "",
+  mode: profile.mode || "reverse",
   lhost: profile.lhost,
   type: profile.type,
   os: profile.os,
@@ -117,6 +122,7 @@ const normalizeProfile = (profile: TeamProfile): TeamProfile => {
   return {
     ...currentProfile,
     listener_uuid: profile.listener_uuid || "",
+    mode: profile.mode || "reverse",
     os_options: profile.os_options?.length ? profile.os_options : [profile.os],
     arch_options: profile.arch_options?.length ? profile.arch_options : [profile.arch],
     protocol: profile.protocol || "generic",
@@ -288,6 +294,10 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       setError("A listener can be attached only to a plain HTTP implant profile.");
       return;
     }
+    if (form.mode !== "reverse") {
+      setError("A reverse listener cannot be attached to a bind-mode profile.");
+      return;
+    }
     const choice = listenerChoices.find(item => item.listener.uuid === uuid);
     if (!choice?.compatibility.compatible || !choice.compatibility.snapshot) {
       setError(choice?.compatibility.reason || "The selected listener cannot be attached to this profile.");
@@ -304,9 +314,11 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     if (!form.os.trim()) return "Operating system is required.";
     if (!form.arch.trim()) return "Architecture is required.";
     if (!form.protocol.trim()) return "Protocol is required.";
+    if (form.mode !== "reverse" && form.mode !== "bind") return "Profile mode must be reverse or bind.";
     if (form.listener_uuid && form.protocol.trim().toLowerCase() !== "http") {
       return "A listener can be attached only to a plain HTTP implant profile.";
     }
+    if (form.listener_uuid && form.mode !== "reverse") return "Bind-mode profiles cannot attach to reverse listeners.";
     if (clearOTS && otsDraft !== "") return "Choose either a replacement OTS or Clear OTS, not both.";
     try {
       const options = JSON.parse(optionsText);
@@ -376,13 +388,14 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
     );
     const parsedOptions = JSON.parse(optionsText) as Record<string, unknown>;
     const protocolChanged = form.protocol.trim() !== original.protocol;
+    const modeChanged = form.mode !== original.mode;
     const optionsChanged = JSON.stringify(parsedOptions) !== JSON.stringify(original.options || {});
     const expiry = fromUTCInputValue(otsExpiresAt);
     const originalExpiry = fromUTCInputValue(toUTCInputValue(original.ots_expires_at));
     const expiryChanged = expiry !== originalExpiry;
     const otsChanged = otsDraft !== "";
     const clearExistingOTS = clearOTS && original.ots_configured;
-    if (changes.length === 0 && !listenerNeedsApply && !protocolChanged && !optionsChanged && !expiryChanged && !otsChanged && !clearExistingOTS) {
+    if (changes.length === 0 && !listenerNeedsApply && !protocolChanged && !modeChanged && !optionsChanged && !expiryChanged && !otsChanged && !clearExistingOTS) {
       setNotice("No profile changes to save.");
       return;
     }
@@ -395,6 +408,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
       for (const change of changes) {
         updated = await onUpdate(original.name, change.apiKey, form[change.property]);
       }
+      if (modeChanged) updated = await onUpdate(original.name, "MODE", form.mode);
       if (protocolChanged) updated = await onUpdate(original.name, "PROTOCOL", form.protocol.trim());
       if (optionsChanged) updated = await onUpdate(original.name, "OPTIONS", JSON.stringify(parsedOptions));
       if (expiryChanged) updated = await onUpdate(original.name, "OTS_EXPIRES_AT", expiry);
@@ -547,7 +561,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                   className={`profile-list-item ${!isCreating && selectedName === profile.name ? "is-selected" : ""}`}
                 >
                   <span>{profile.name}</span>
-                  <small>{profile.type} · {profile.os}/{profile.arch}</small>
+                  <small>{profile.type} · {profile.mode} · {profile.os}/{profile.arch}</small>
                 </button>
               ))}
             </CompactScrollbar>
@@ -580,6 +594,29 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                     placeholder="profile-name"
                   />
                 </CompactFormRow>
+                <CompactFormRow
+                  label="Transport mode"
+                  htmlFor="profile-mode"
+                  hint={form.mode === "bind"
+                    ? "Bind implants accept requests from a speaker. Reverse-listener attachment is unavailable."
+                    : "Reverse implants initiate callbacks to a listener."}
+                >
+                  <CompactSelect
+                    id="profile-mode"
+                    value={form.mode}
+                    onChange={event => {
+                      const mode = event.target.value as TeamProfile["mode"];
+                      const detachesListener = mode === "bind" && Boolean(form.listener_uuid);
+                      setForm(current => ({ ...current, mode, ...(mode === "bind" ? { listener_uuid: "" } : {}) }));
+                      setError("");
+                      setNotice(detachesListener ? "Changing to bind mode will detach the reverse listener when saved." : "");
+                    }}
+                    disabled={isSaving}
+                  >
+                    <option value="reverse">Reverse — implant calls a listener</option>
+                    <option value="bind">Bind — speaker calls the implant</option>
+                  </CompactSelect>
+                </CompactFormRow>
                 {editableFields.map(field => (
                   <React.Fragment key={field.property}>
                   {field.property === "lhost" && (
@@ -593,7 +630,7 @@ export const ProfileManager: React.FC<ProfileManagerProps> = ({
                           id="profile-lhost-listener"
                           value={form.listener_uuid}
                           onChange={event => selectListener(event.target.value)}
-                          disabled={isSaving}
+                          disabled={isSaving || form.mode !== "reverse"}
                         >
                           <option value="">No listener — manual LHOST</option>
                           {missingAttachedListener && (
