@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { Session } from "../types";
 import { MAX_SESSION_NOTE_BYTES } from "../api/teamApi";
+import { tokenizeSessionNote } from "../utils/sessionNotes";
 import { 
   Terminal,
   ChevronRight,
@@ -118,6 +119,12 @@ const sessionColorOptions = [
 const utf8ByteLength = (value: string) => new TextEncoder().encode(value).byteLength;
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+const renderSessionNote = (note: string) => tokenizeSessionNote(note).map((segment, index) =>
+  segment.isTag
+    ? <span key={index} className="session-note-tag">{segment.text}</span>
+    : <React.Fragment key={index}>{segment.text}</React.Fragment>
+);
 
 const formatLastActive = (value: number) => {
   const totalSeconds = Math.max(0, Math.floor(value));
@@ -497,7 +504,7 @@ export const C2SessionTable: React.FC<SessionTableProps> = ({
                       </div>
                     ) : (
                       <div className="flex items-center justify-between w-full group">
-                        <span>{session.note || ""}</span>
+                        <span className="session-note-text">{renderSessionNote(session.note || "")}</span>
                         {!isKilled && (
                           <CompactIconButton
                             onClick={(e) => {

@@ -250,6 +250,19 @@ svg.lucide {
   min-height: 19px !important;
 }
 
+.session-note-text {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-note-tag {
+  color: var(--accent-hover);
+  font-weight: 600;
+}
+
 .session-context-menu {
   position: fixed;
   z-index: 50;
